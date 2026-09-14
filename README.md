@@ -1,27 +1,21 @@
 # fpl-starts
 
-Fantasy Premier League is played by more than 11 million people, and every
-one of them makes the same weekly bet: which 11 of your 15 players will
-actually take the pitch. Pick wrong and the cost isn't small. A player who
-doesn't start scores zero from that slot regardless of how good a pick they
-looked on paper -- no clean sheet, no goal, no bonus, nothing recoverable
-unless a legal auto-substitution happens to bail you out. Captain someone
-who doesn't start and the armband's double points are gone too. A transfer
-spent on a player who then gets rotated to the bench is a wasted transfer,
-not a neutral one -- the alternative used was a real, scarce resource.
+Fantasy Premier League has over 11 million players. Every one of them picks
+a 15-player squad each week and has to guess which 11 will actually start.
+Guess wrong and the player scores nothing from that slot -- no goal, no
+clean sheet, no bonus -- and if he's captained, the doubled points are gone
+too. A transfer used on someone who then sits on the bench is a transfer
+spent on nothing.
 
-The tool managers are given for this decision is a single number on the
-player's card: a 25/50/75/100 "chance of playing" flag. It answers
-*fitness*, not *selection* -- it cannot tell a nailed-on regular apart from
-a fourth-choice option, because it was never designed to. The gap between
-"not injured" and "will start" is exactly where squads get quietly wrecked.
+The only signal the game gives for this is `chance_of_playing_next_round`, a
+flag on the player's card (25/50/75/100). It measures fitness, not
+selection -- it can't tell a nailed-on starter from a fourth-choice option,
+because that was never what it was built to answer.
 
-**The objective here is to automate a reliable, calibrated estimate of
-P(starts)** -- built from what a player has actually done recently, scored
-against real outcomes rather than assumed. Not the flag taken at face value;
-the *observed* frequency of starting, measured, backtested, and reported
-honestly on the group of players where it's genuinely hard, not just where
-it's easy. This package is the base model:
+This package automates a P(starts) estimate to fill that gap: not the flag
+read at face value, but the observed frequency of starting, backtested
+against real outcomes and reported honestly for the players it's actually
+hard to call, not just the easy ones.
 
 ## What's here
 

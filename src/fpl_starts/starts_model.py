@@ -72,11 +72,11 @@ import pandas as pd
 
 from . import api
 from . import archiver
+from .config import PREDICTIONS_DIR
 
 COMMUNITY_ARCHIVE_BASE = (
     "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data"
 )
-PREDICTIONS_DIR = "predictions"
 
 # roll4 bins, matching notebooks/fpl_starts_analysis.ipynb exactly, so a
 # fitted table there and one here mean the same thing.

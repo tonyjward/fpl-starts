@@ -27,7 +27,7 @@ current squad. Two reasons:
 - **Validation.** 15 players over 2 gameweeks is 30 observations, far too few
   to measure calibration. The full pool gives ~1,200 per gameweek, enough for
   a reliability curve by decile within a few weeks.
-- **Transfers.** You cannot evaluate a transfer target whose minutes you have
+- **Transfers.** You cannot evaluate a transfer target whose starting probability you have
   not modelled.
 
 This introduces one serious trap, described in §8b. Read it before writing

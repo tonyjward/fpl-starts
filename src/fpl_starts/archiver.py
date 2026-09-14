@@ -20,8 +20,7 @@ import os
 from datetime import datetime, timezone
 
 from . import api
-
-RAW_DIR = "raw"
+from .config import RAW_DIR
 MANIFEST_FILENAME = "manifest.jsonl"
 
 ENDPOINT_PATHS = {

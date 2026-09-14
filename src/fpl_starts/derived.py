@@ -21,9 +21,7 @@ import unicodedata
 from datetime import datetime
 
 from . import archiver
-
-DERIVED_DB_PATH = "derived.db"
-PREDICTIONS_DIR = "predictions"
+from .config import DERIVED_DB_PATH, PREDICTIONS_DIR
 
 BASE_SCHEMA = """
 CREATE TABLE teams (

@@ -1,11 +1,12 @@
 # fpl-starts
 
-Fantasy Premier League has over 11 million players. Every one of them picks
-a 15-player squad each week and has to guess which 11 will actually start.
-Guess wrong and the player scores nothing from that slot -- no goal, no
-clean sheet, no bonus -- and if he's captained, the doubled points are gone
-too. A transfer used on someone who then sits on the bench is a transfer
-spent on nothing.
+Fantasy Premier League has over 11 million players. Each of them owns a
+15-player squad and makes two decisions every week: which transfers to make,
+and which 11 of the 15 to start. Both decisions turn on the same question --
+will this player actually take the pitch. Get it wrong and the player scores
+nothing from that slot -- no goal, no clean sheet, no bonus -- and if he's
+captained, the doubled points are gone too. A transfer spent on someone who
+then sits on the bench is a transfer spent on nothing.
 
 The only signal the game gives for this is `chance_of_playing_next_round`, a
 flag on the player's card (25/50/75/100). It measures fitness, not

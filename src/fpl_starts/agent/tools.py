@@ -26,15 +26,25 @@ class ToolBudgetExceeded(Exception):
 
 
 class ToolBudget(object):
-    """Tracks remaining search/fetch calls for one club's agent run.
+    """Tracks remaining search/fetch calls for one club's agent run, and
+    (see record_llm_usage) the LLM token usage that run actually cost --
+    the same object already threaded through run_agent_loop/
+    predict_club_agent is the natural place to accumulate both, rather than
+    widening every function's return signature to carry a second value.
 
-    Enforced in code, not left to the model's discretion -- see predict.py's
-    module docstring for why.
+    Search/fetch caps are enforced in code, not left to the model's
+    discretion -- see predict.py's module docstring for why. Token usage
+    isn't capped (the per-turn/tool-call caps already bound it indirectly);
+    it's recorded so a run's actual cost is visible after the fact, e.g.
+    for comparing model tiers -- see predict.MODEL_PRICING_PER_MTOK.
     """
 
     def __init__(self, max_searches=3, max_fetches=2):
         self.searches_remaining = max_searches
         self.fetches_remaining = max_fetches
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.llm_calls = 0
 
     def take_search(self):
         if self.searches_remaining <= 0:
@@ -45,6 +55,17 @@ class ToolBudget(object):
         if self.fetches_remaining <= 0:
             raise ToolBudgetExceeded("fetch budget exhausted")
         self.fetches_remaining -= 1
+
+    def record_llm_usage(self, response):
+        """Accumulate one successful messages.create() response's token
+        usage. Tolerates a fake/stub response with no `.usage` (records the
+        call but no tokens) rather than raising -- tests shouldn't need to
+        fabricate a realistic usage object just to exercise the loop.
+        """
+        self.llm_calls += 1
+        usage = getattr(response, "usage", None)
+        self.input_tokens += getattr(usage, "input_tokens", 0) or 0
+        self.output_tokens += getattr(usage, "output_tokens", 0) or 0
 
 
 def search_web(query, api_key=None, session=None):

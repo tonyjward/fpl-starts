@@ -13,6 +13,7 @@ import pytest
 from fpl_starts.agent.categories import CATEGORY_PRIORS
 from fpl_starts.agent.predict import (
     _blend_verified,
+    estimate_cost_usd,
     get_opponent,
     load_club_roster,
     predict_club_agent,
@@ -92,9 +93,16 @@ class FakeBlock(object):
         self.text = text
 
 
+class FakeUsage(object):
+    def __init__(self, input_tokens=10, output_tokens=5):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
 class FakeMessage(object):
-    def __init__(self, text):
+    def __init__(self, text, usage=None):
         self.content = [FakeBlock(text)]
+        self.usage = usage if usage is not None else FakeUsage()
 
 
 class FakeMessagesResource(object):
@@ -402,6 +410,54 @@ def test_run_agent_loop_gives_up_gracefully_after_two_consecutive_api_failures()
     assert len(client.messages.calls) == 2  # no third attempt
 
 
+def test_run_agent_loop_records_token_usage_on_budget():
+    """Usage lives on `budget`, not run_agent_loop's return value -- see
+    ToolBudget.record_llm_usage's docstring for why.
+    """
+    responses = [
+        json.dumps({"action": "search_web", "query": "q"}),
+        json.dumps({"action": "final_answer", "classifications": []}),
+    ]
+    client = FakeAnthropicClient(responses)
+    budget = ToolBudget()
+    run_agent_loop(
+        client, "fake-model", "Leeds", fake_roster(), budget, search_web=lambda q: [],
+    )
+    assert budget.llm_calls == 2
+    assert budget.input_tokens == 20  # 2 calls x FakeUsage's default 10
+    assert budget.output_tokens == 10  # 2 calls x FakeUsage's default 5
+
+
+def test_run_agent_loop_does_not_record_usage_for_a_failed_attempt():
+    """A failed attempt was never billed -- only the successful retry's
+    usage should land on the budget.
+    """
+    responses = [
+        anthropic.AnthropicError("rate limited"),
+        json.dumps({"action": "final_answer", "classifications": []}),
+    ]
+    client = FakeAnthropicClient(responses)
+    budget = ToolBudget()
+    run_agent_loop(client, "fake-model", "Leeds", fake_roster(), budget)
+    assert budget.llm_calls == 1
+    assert budget.input_tokens == 10
+    assert budget.output_tokens == 5
+
+
+# --------------------------------------------------------------------------
+# estimate_cost_usd
+# --------------------------------------------------------------------------
+
+
+def test_estimate_cost_usd_known_model():
+    cost = estimate_cost_usd("claude-sonnet-4-5", input_tokens=1_000_000, output_tokens=1_000_000)
+    assert cost == pytest.approx(3.00 + 15.00)
+
+
+def test_estimate_cost_usd_unknown_model_returns_none():
+    assert estimate_cost_usd("some-future-model", input_tokens=100, output_tokens=100) is None
+
+
 # --------------------------------------------------------------------------
 # verify_classifications
 # --------------------------------------------------------------------------
@@ -699,6 +755,12 @@ def test_predict_club_agent_applies_verified_classification_and_falls_back_other
     ]
     assert bob["method"] == "agent_fallback_no_news"
     assert bob["evidence"] is None
+
+    usage = frame.attrs["usage"]
+    assert usage["llm_calls"] == 2
+    assert usage["input_tokens"] == 20
+    assert usage["output_tokens"] == 10
+    assert usage["model"] == "claude-sonnet-4-5"  # predict_club_agent's default
 
 
 def test_predict_club_agent_confirmed_out_hard_gates_to_zero(tmp_path):

@@ -38,6 +38,33 @@ from fpl_starts.agent.tools import ToolBudget, ToolBudgetExceeded
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
 
+# Approximate list pricing, $ per million tokens -- correct as of when this
+# was written, not fetched live, so treat cost estimates as directional
+# only; check anthropic.com/pricing before relying on this for a real
+# budgeting decision. Purpose: make a Sonnet-vs-Haiku tradeoff visible from
+# an actual run's own token counts (see ToolBudget.record_llm_usage)
+# instead of guessing at it -- this is a classification task on short,
+# templated prompts (a roster list in, one JSON action out per turn), the
+# same workload shape the private repo's own news_extraction.py already
+# found ran fine on claude-haiku-4-5 (see its MODEL constant); nothing
+# here defaults to Haiku yet since that's a quality call this project
+# hasn't validated for itself, not just a cost one.
+MODEL_PRICING_PER_MTOK = {
+    "claude-sonnet-4-5": {"input": 3.00, "output": 15.00},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+}
+
+
+def estimate_cost_usd(model, input_tokens, output_tokens):
+    """Rough $ estimate from MODEL_PRICING_PER_MTOK, or None for a model
+    not in that table (an unknown/future model shouldn't crash a report --
+    just show token counts without a $ figure for it).
+    """
+    rates = MODEL_PRICING_PER_MTOK.get(model)
+    if rates is None:
+        return None
+    return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1e6
+
 # Methods on the anchor (refined_availability's own output) that represent
 # an actual FPL-fitness-based decision -- a news/agent classification must
 # never override these, same precedence rule the private repo's own
@@ -235,20 +262,26 @@ def load_club_roster(conn, season, prior_season, target_round, team_name, fetch=
     return merged[merged["team"] == team_name].drop(columns=["team"]).reset_index(drop=True)
 
 
-def _create_message_with_one_retry(llm_client, model, messages):
+def _create_message_with_one_retry(llm_client, model, messages, budget):
     """llm_client.messages.create, retried once on a real API failure
     (rate limit, timeout, transient outage -- anthropic.AnthropicError
     covers all of the SDK's own error types) before giving up. Returns
     None (not raising) if both attempts fail, so a single club's bad luck
     doesn't crash a multi-club run -- see run_agent_loop's use of this.
+
+    Records token usage on `budget` for every successful call (not failed
+    attempts -- nothing was billed for those) so the caller can see what a
+    run actually cost, e.g. to compare model tiers.
     """
     import anthropic
 
     for attempt in range(2):
         try:
-            return llm_client.messages.create(
+            response = llm_client.messages.create(
                 model=model, system=SYSTEM_PROMPT, max_tokens=1024, messages=messages,
             )
+            budget.record_llm_usage(response)
+            return response
         except anthropic.AnthropicError as exc:
             print("  (API call failed{0}: {1})".format(
                 ", retrying once" if attempt == 0 else ", giving up", exc
@@ -309,7 +342,7 @@ def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=N
     reclassifications_used = 0
 
     for _ in range(max_turns):
-        response = _create_message_with_one_retry(llm_client, model, messages)
+        response = _create_message_with_one_retry(llm_client, model, messages, budget)
         if response is None:
             # The API itself failed twice in a row (rate limit, timeout,
             # transient outage) -- there's no model response to continue
@@ -512,7 +545,9 @@ def predict_club_agent(conn, season, prior_season, target_round, team_name,
     """
     roster = load_club_roster(conn, season, prior_season, target_round, team_name, fetch=fetch)
     if len(roster) == 0:
-        return roster.assign(evidence=None)
+        empty = roster.assign(evidence=None)
+        empty.attrs["usage"] = {"input_tokens": 0, "output_tokens": 0, "llm_calls": 0, "model": model}
+        return empty
 
     if llm_client is None:
         import anthropic
@@ -572,7 +607,12 @@ def predict_club_agent(conn, season, prior_season, target_round, team_name,
         by_code.loc[code, "method"] = method
         by_code.loc[code, "evidence"] = evidence_json
 
-    return by_code.reset_index()
+    result_frame = by_code.reset_index()
+    result_frame.attrs["usage"] = {
+        "input_tokens": budget.input_tokens, "output_tokens": budget.output_tokens,
+        "llm_calls": budget.llm_calls, "model": model,
+    }
+    return result_frame
 
 
 def _main():
@@ -626,6 +666,7 @@ def _main():
 
     frames = []
     failed_teams = []
+    total_usage = {"input_tokens": 0, "output_tokens": 0, "llm_calls": 0}
     for team_name in args.team:
         print("classifying {0}...".format(team_name))
         try:
@@ -640,11 +681,28 @@ def _main():
             failed_teams.append(team_name)
             continue
         n_classified = int((frame["evidence"].notna()).sum())
-        print("  {0}: {1}/{2} players classified".format(
-            team_name, n_classified, len(frame)
+        usage = frame.attrs.get("usage") or {}
+        cost = estimate_cost_usd(
+            args.model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+        )
+        cost_str = "~${0:.4f}".format(cost) if cost is not None else "cost unknown for this model"
+        print("  {0}: {1}/{2} players classified ({3} LLM calls, {4} in / {5} out tokens, {6})".format(
+            team_name, n_classified, len(frame), usage.get("llm_calls", 0),
+            usage.get("input_tokens", 0), usage.get("output_tokens", 0), cost_str,
         ))
+        for key in ("input_tokens", "output_tokens", "llm_calls"):
+            total_usage[key] += usage.get(key, 0)
         frames.append(frame)
     conn.close()
+
+    total_cost = estimate_cost_usd(
+        args.model, total_usage["input_tokens"], total_usage["output_tokens"]
+    )
+    total_cost_str = "~${0:.4f}".format(total_cost) if total_cost is not None else "cost unknown for this model"
+    print("total ({0}): {1} LLM calls, {2} in / {3} out tokens, {4}".format(
+        args.model, total_usage["llm_calls"], total_usage["input_tokens"],
+        total_usage["output_tokens"], total_cost_str,
+    ))
 
     if not frames:
         raise SystemExit(

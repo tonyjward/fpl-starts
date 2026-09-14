@@ -4,3 +4,4 @@ __pycache__/
 raw/
 derived.db
 predictions/
+src/*.egg-info/

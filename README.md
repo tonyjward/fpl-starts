@@ -6,17 +6,25 @@ and which 11 of the 15 to start. Both decisions turn on the same question --
 will this player actually take the pitch. Get it wrong and the player scores
 nothing from that slot -- no goal, no clean sheet, no bonus -- and if he's
 captained, the doubled points are gone too. A transfer spent on someone who
-then sits on the bench is a transfer spent on nothing.
+then sits on the bench is a wasted transfer.
 
 The only signal the game gives for this is `chance_of_playing_next_round`, a
-flag on the player's card (25/50/75/100). It measures fitness, not
+flag on the player's card (25/50/75/100). It measures fitness/injury risk, not
 selection -- it can't tell a nailed-on starter from a fourth-choice option,
 because that was never what it was built to answer.
 
-This package automates a P(starts) estimate to fill that gap: not the flag
-read at face value, but the observed frequency of starting, backtested
-against real outcomes and reported honestly for the players it's actually
-hard to call, not just the easy ones.
+The objective is P(starts) for the full pool -- around 620 players, not
+just the 15 in one manager's own squad. A transfer target needs the same
+estimate a current player does, and 15 players a week isn't enough outcomes
+to tell whether a model is actually any good.
+
+This repo is also where different approaches to that estimate get
+benchmarked against each other, rather than assumed better because they
+sound more sophisticated. The first arm uses nothing but a player's own
+recent starts. A second layers FPL's own injury/status flag on top. A
+third, not yet built, replaces that flag with an agent that reads team news
+itself and updates the estimate from what it finds. Each is scored against
+the same real outcomes before it's trusted.
 
 ## What's here
 

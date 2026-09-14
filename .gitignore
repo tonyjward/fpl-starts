@@ -5,3 +5,4 @@ raw/
 derived.db
 predictions/
 src/*.egg-info/
+.env

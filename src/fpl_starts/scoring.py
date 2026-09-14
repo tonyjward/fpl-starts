@@ -1,6 +1,6 @@
 """Scoring harness: score archived predictions against actual outcomes.
 
-docs/build_spec_minutes_model.md Section 8 (calibration harness), 8.0
+docs/build_spec_p_starts.md Section 8 (calibration harness), 8.0
 (validation protocol), 8.1 (scoring loop), 8b (stratified reporting and the
 class-imbalance trap).
 

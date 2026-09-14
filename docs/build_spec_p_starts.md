@@ -1,12 +1,8 @@
 # Build spec: P(starts)
 
-An excerpt of this project's original design spec, trimmed to just the parts
-this package implements: the base P(starts) lookup-table model
+Design spec for this package: the P(starts) lookup-table model
 (`predict_gameweek`/`predict_gameweek_refined`), the raw archiver, the
-derived SQLite layer, and the calibration harness. The original spec also
-covers an expected-minutes model, a scraped news evidence layer, and a squad
-validator/optimiser — none of those are built here; this package's README
-explains the boundary and what layers on top of it elsewhere.
+derived SQLite layer, and the calibration harness.
 
 Target: Python 3.7. No walrus operator, no `X | Y` type unions, no f-string
 `=` specifier.
@@ -20,9 +16,6 @@ For each player `i` and gameweek `g`, produce:
 ```
 P_start[i,g]     probability the player is in the starting XI
 ```
-
-(The original spec's fuller objective also covers `P_appear`/`P_60`/
-`E_minutes` — an expected-minutes model this package doesn't implement.)
 
 ---
 

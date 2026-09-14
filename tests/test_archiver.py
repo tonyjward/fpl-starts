@@ -1,5 +1,5 @@
 """Tests for archiver, written against the 20-item list in
-docs/build_spec_minutes_model.md-derived plan (see the raw-archiver plan
+docs/build_spec_p_starts.md-derived plan (see the raw-archiver plan
 in the project history). Each test function's docstring names which item
 it covers.
 """

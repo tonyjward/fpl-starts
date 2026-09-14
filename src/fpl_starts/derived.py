@@ -1,6 +1,6 @@
 """Derived layer: SQLite tables rebuilt by replaying the raw archive.
 
-Per docs/build_spec_minutes_model.md Section 2.3a: the derived layer is
+Per docs/build_spec_p_starts.md Section 2.3a: the derived layer is
 disposable and rebuilt freely, never written to directly or updated
 incrementally. If a parsing bug is found here, delete the database and
 rebuild -- the raw archive is unaffected and is the only thing that must
@@ -404,7 +404,7 @@ def _load_gameweek_stats(conn, base_dir, season, id_to_code, team_code_history):
 def _load_availability_snapshots(conn, base_dir, season):
     """One row per (code, fetched_at) for every archived bootstrap-static
     pull -- the full trajectory, not just the value closest to a deadline.
-    Per docs/build_spec_minutes_model.md Section 2.3, these fields are live
+    Per docs/build_spec_p_starts.md Section 2.3, these fields are live
     state with no history anywhere else, and deadline-day is expected to be
     pulled multiple times specifically to catch late-breaking news; keeping
     every snapshot is what makes that trajectory queryable later, rather
@@ -509,7 +509,7 @@ def _seasons_in_archive(base_dir):
 def cross_check_season_totals(conn, season):
     """Assert every player's summed per-gameweek minutes/starts in the
     derived layer match bootstrap-static's season totals. Per
-    docs/build_spec_minutes_model.md Section 2.5: "Any mismatch means a
+    docs/build_spec_p_starts.md Section 2.5: "Any mismatch means a
     missed or double-counted gameweek and must fail the run."
 
     Only checks players with at least one archived gameweek row -- a player

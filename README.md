@@ -37,7 +37,7 @@ walk-forward on a full season (27 folds): beats a persistence baseline
 Beta-Binomial shrinkage toward per-player history was tested and added
 nothing -- the optimal weight on player-specific history beyond `prev`/
 `roll4` turned out to be approximately zero. See
-`docs/build_spec_minutes_model.md` (the design spec) and
+`docs/build_spec_p_starts.md` (the design spec) and
 `notebooks/fpl_starts_analysis.ipynb` (the analysis that produced it) for
 the full case, including why a single pool-wide Brier score is actively
 misleading (Deep/never-starting players are ~41% of rows and trivially

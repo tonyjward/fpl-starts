@@ -20,7 +20,7 @@ round uses the cross-season lookup table.
 
 Prior-season history comes from the community archive
 (vaastav/Fantasy-Premier-League), since the live API holds the current
-season only (docs/build_spec_minutes_model.md Section 2.3). Current-season
+season only (docs/build_spec_p_starts.md Section 2.3). Current-season
 history comes from this project's own derived.db (derived.py).
 
 Players with no history on either side -- new signings, promotions, youth --

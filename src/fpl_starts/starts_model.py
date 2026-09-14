@@ -53,11 +53,8 @@ prediction carries a `model_version` ("raw_lookup" or "refined_availability")
 so the two can be scored side by side via scoring.py's compare_models.
 
 These two arms are the base model: no scraped evidence, no LLM calls,
-nothing beyond FPL's own bootstrap-static/event-live data. This package
-exists to be a single source of truth for them, consumed both directly and
-as a dependency by anything layering further evidence on top (news
-extraction, cup/European rotation signals, or an agent-based challenger) --
-see this package's README for that boundary.
+nothing beyond FPL's own bootstrap-static/event-live data -- see this
+package's README for what's deliberately not here.
 
 Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """

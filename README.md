@@ -46,16 +46,12 @@ is the number that actually matters.
 
 ## What's deliberately not here
 
-This package is the base model only -- the foundation another project
-(private, not published) builds three further evidence arms on top of:
-scraped-news-based availability (LLM-classified team news/press
-conferences), an LLM-estimated-probability challenger to that, and a
-cup/European midweek-fixture rotation signal. All three call
-`predict_gameweek_refined` from this package and layer their own routing on
-top rather than duplicating it -- this package is that project's dependency,
-not a fork of it. An AI-agent-based challenger to the base model (explicit
-tool calls, including its own evidence-gathering, evaluated through the same
-`scoring.py` harness) is the planned next addition to this repo.
+This package is the base model only -- two baselines (`raw_lookup` and
+`refined_availability`) plus the archiver/derived layer/calibration harness
+that support them, kept deliberately minimal. An AI-agent-based challenger
+to these baselines (explicit tool calls, including its own
+evidence-gathering, evaluated through the same `scoring.py` harness) is the
+planned next addition to this repo.
 
 ## Running the pipeline
 

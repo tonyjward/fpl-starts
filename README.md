@@ -4,9 +4,10 @@ Fantasy Premier League has over 11 million players. Each of them owns a
 15-player squad and makes two decisions every week: 
 * which transfers to make,
 * which 11 of the 15 to start. 
+
 Having a robust estimate of the probability of starting the next game
 is valuable information for FPL players, as it allows better decisions.
-You don't want to captain/buy/transfer players that are not going to be
+You don't want to captain/buy/transfer in players that are not going to be
 involved in the game.
 
 The FPL app does provide a `chance_of_playing_next_round` which takes
@@ -18,8 +19,8 @@ or to rotate the squad.
 The aim of this project is to produce P(start) for all Premier League
 players. We will be testing 3 model variants
 1) Only a players recent history
-2) Layers on FPL's own injury status flag on top of 1.
-3) Layer on an adjustement to 2 for team news. We will use an Agent for this
+2) Layer on FPL's own injury status flag on top of 1.
+3) Layer on a team news adjustement to 2. We will use an Agent for this
 
 ## What's here
 

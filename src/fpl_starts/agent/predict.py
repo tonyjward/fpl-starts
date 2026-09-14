@@ -36,19 +36,26 @@ from fpl_starts.agent import categories
 from fpl_starts.agent import tools as agent_tools
 from fpl_starts.agent.tools import ToolBudget, ToolBudgetExceeded
 
-DEFAULT_MODEL = "claude-sonnet-4-5"
+DEFAULT_MODEL = "claude-haiku-4-5"
 
 # Approximate list pricing, $ per million tokens -- correct as of when this
 # was written, not fetched live, so treat cost estimates as directional
 # only; check anthropic.com/pricing before relying on this for a real
 # budgeting decision. Purpose: make a Sonnet-vs-Haiku tradeoff visible from
 # an actual run's own token counts (see ToolBudget.record_llm_usage)
-# instead of guessing at it -- this is a classification task on short,
-# templated prompts (a roster list in, one JSON action out per turn), the
-# same workload shape the private repo's own news_extraction.py already
-# found ran fine on claude-haiku-4-5 (see its MODEL constant); nothing
-# here defaults to Haiku yet since that's a quality call this project
-# hasn't validated for itself, not just a cost one.
+# instead of guessing at it.
+#
+# DEFAULT_MODEL is claude-haiku-4-5, not Sonnet: this is a classification
+# task on short, templated prompts (a roster list in, one JSON action out
+# per turn) -- the same workload shape the private repo's own
+# news_extraction.py already runs on claude-haiku-4-5 in production (see
+# its MODEL constant), so there's already a validated precedent for Haiku
+# on this exact kind of task, not just a cost guess. Our own live
+# comparison (predict.py's git history) only got as far as confirming the
+# instrumentation and the rough cost gap -- both models returned zero
+# classifications on the one club tested, too early in the gameweek for
+# real news to exist yet -- so this default is carried over from the
+# private repo's precedent, not independently re-validated here yet.
 MODEL_PRICING_PER_MTOK = {
     "claude-sonnet-4-5": {"input": 3.00, "output": 15.00},
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00},

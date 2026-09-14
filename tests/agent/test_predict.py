@@ -760,7 +760,7 @@ def test_predict_club_agent_applies_verified_classification_and_falls_back_other
     assert usage["llm_calls"] == 2
     assert usage["input_tokens"] == 20
     assert usage["output_tokens"] == 10
-    assert usage["model"] == "claude-sonnet-4-5"  # predict_club_agent's default
+    assert usage["model"] == "claude-haiku-4-5"  # predict_club_agent's default
 
 
 def test_predict_club_agent_confirmed_out_hard_gates_to_zero(tmp_path):

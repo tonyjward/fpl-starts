@@ -6,6 +6,7 @@ API calls anywhere -- llm_client/search_web/fetch_page_text are all fakes.
 import json
 import sqlite3
 
+import anthropic
 import pandas as pd
 import pytest
 
@@ -111,7 +112,10 @@ class FakeMessagesResource(object):
         if "messages" in snapshot:
             snapshot["messages"] = list(snapshot["messages"])
         self.calls.append(snapshot)
-        return FakeMessage(self._responses.pop(0))
+        next_response = self._responses.pop(0)
+        if isinstance(next_response, Exception):
+            raise next_response
+        return FakeMessage(next_response)
 
 
 class FakeAnthropicClient(object):
@@ -244,6 +248,29 @@ def test_run_agent_loop_search_budget_exceeded_is_surfaced_not_raised():
     assert search_calls == ["q1"]  # second search was refused, never called
 
 
+def test_run_agent_loop_search_failure_is_surfaced_not_raised():
+    """A real search failure (network error, rate limit, missing API key)
+    must not crash the loop -- fed back as an observation so the agent can
+    try something else, same treatment fetch_page_text failures already get.
+    """
+    responses = [
+        json.dumps({"action": "search_web", "query": "q1"}),
+        json.dumps({"action": "final_answer", "classifications": []}),
+    ]
+    client = FakeAnthropicClient(responses)
+
+    def failing_search(query):
+        raise RuntimeError("Brave API rate limited")
+
+    classifications, _pages = run_agent_loop(
+        client, "fake-model", "Leeds", fake_roster(), ToolBudget(),
+        search_web=failing_search,
+    )
+    assert classifications == []  # loop recovered and reached final_answer
+    second_call_messages = client.messages.calls[1]["messages"]
+    assert "Search failed" in second_call_messages[-1]["content"]
+
+
 def test_run_agent_loop_includes_opponent_in_initial_prompt_when_known():
     client = FakeAnthropicClient([
         json.dumps({"action": "final_answer", "classifications": []}),
@@ -342,6 +369,37 @@ def test_run_agent_loop_gives_up_after_max_turns_without_final_answer():
         search_web=lambda q: [], max_turns=3,
     )
     assert classifications == []
+
+
+def test_run_agent_loop_retries_once_on_a_transient_api_error_then_succeeds():
+    responses = [
+        anthropic.AnthropicError("rate limited"),
+        json.dumps({"action": "final_answer", "classifications": []}),
+    ]
+    client = FakeAnthropicClient(responses)
+    classifications, _pages = run_agent_loop(
+        client, "fake-model", "Leeds", fake_roster(), ToolBudget(),
+    )
+    assert classifications == []  # recovered on the retry
+    assert len(client.messages.calls) == 2
+
+
+def test_run_agent_loop_gives_up_gracefully_after_two_consecutive_api_failures():
+    """Two failures in a row (the one retry also failed) means there's no
+    model response to continue from -- the loop must give up gracefully
+    (empty result) rather than crash the whole multi-club run.
+    """
+    responses = [
+        anthropic.AnthropicError("rate limited"),
+        anthropic.AnthropicError("still rate limited"),
+    ]
+    client = FakeAnthropicClient(responses)
+    classifications, pages = run_agent_loop(
+        client, "fake-model", "Leeds", fake_roster(), ToolBudget(),
+    )
+    assert classifications == []
+    assert pages == {}
+    assert len(client.messages.calls) == 2  # no third attempt
 
 
 # --------------------------------------------------------------------------

@@ -235,6 +235,27 @@ def load_club_roster(conn, season, prior_season, target_round, team_name, fetch=
     return merged[merged["team"] == team_name].drop(columns=["team"]).reset_index(drop=True)
 
 
+def _create_message_with_one_retry(llm_client, model, messages):
+    """llm_client.messages.create, retried once on a real API failure
+    (rate limit, timeout, transient outage -- anthropic.AnthropicError
+    covers all of the SDK's own error types) before giving up. Returns
+    None (not raising) if both attempts fail, so a single club's bad luck
+    doesn't crash a multi-club run -- see run_agent_loop's use of this.
+    """
+    import anthropic
+
+    for attempt in range(2):
+        try:
+            return llm_client.messages.create(
+                model=model, system=SYSTEM_PROMPT, max_tokens=1024, messages=messages,
+            )
+        except anthropic.AnthropicError as exc:
+            print("  (API call failed{0}: {1})".format(
+                ", retrying once" if attempt == 0 else ", giving up", exc
+            ))
+    return None
+
+
 def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=None,
                     search_web=None, fetch_page_text=None, max_turns=12,
                     max_reclassifications=1):
@@ -288,9 +309,15 @@ def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=N
     reclassifications_used = 0
 
     for _ in range(max_turns):
-        response = llm_client.messages.create(
-            model=model, system=SYSTEM_PROMPT, max_tokens=1024, messages=messages,
-        )
+        response = _create_message_with_one_retry(llm_client, model, messages)
+        if response is None:
+            # The API itself failed twice in a row (rate limit, timeout,
+            # transient outage) -- there's no model response to continue
+            # the conversation from, so this club is abandoned gracefully
+            # rather than crashing the whole run. The caller (predict_club_
+            # agent, or _main's per-team loop) treats this the same as
+            # "no evidence found", not an error.
+            return [], fetched_pages
         text = _extract_response_text(response)
         messages.append({"role": "assistant", "content": text})
 
@@ -336,6 +363,13 @@ def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=N
                     "Search budget exhausted. Use fetch_page_text on a "
                     "result you already have, or call final_answer now."
                 )
+            except Exception as exc:  # noqa: BLE001 -- a real search failure
+                # (rate limit, network error, missing API key) is the
+                # agent's problem to route around (try a different query
+                # later, fall back to what it already has, or give up on
+                # this player) rather than crashing the whole run -- same
+                # reasoning as fetch_page_text's own handling below.
+                observation = "Search failed: {0}".format(exc)
             messages.append({"role": "user", "content": observation})
             continue
 
@@ -591,17 +625,31 @@ def _main():
         target_round = int(max_round) + 1 if max_round is not None else 1
 
     frames = []
+    failed_teams = []
     for team_name in args.team:
         print("classifying {0}...".format(team_name))
-        frame = predict_club_agent(
-            conn, season, prior_season, target_round, team_name, model=args.model,
-        )
+        try:
+            frame = predict_club_agent(
+                conn, season, prior_season, target_round, team_name, model=args.model,
+            )
+        except Exception as exc:  # noqa: BLE001 -- one club's failure (a
+            # bug, a bad team name, an unhandled API/network error) must
+            # not cost every other club's already-completed work. Reported
+            # clearly and skipped, not swallowed silently.
+            print("  {0}: FAILED, skipping -- {1}".format(team_name, exc))
+            failed_teams.append(team_name)
+            continue
         n_classified = int((frame["evidence"].notna()).sum())
         print("  {0}: {1}/{2} players classified".format(
             team_name, n_classified, len(frame)
         ))
         frames.append(frame)
     conn.close()
+
+    if not frames:
+        raise SystemExit(
+            "every team failed ({0}); nothing to snapshot".format(", ".join(failed_teams))
+        )
 
     combined = pd.concat(frames, ignore_index=True)
     audit_cols = ["evidence"] if "evidence" in combined.columns else []
@@ -612,6 +660,10 @@ def _main():
         base_dir=args.predictions_dir,
     )
     print("snapshot -> {0}".format(path))
+    if failed_teams:
+        print("WARNING: {0} team(s) failed and are not in this snapshot: {1}".format(
+            len(failed_teams), ", ".join(failed_teams)
+        ))
 
 
 if __name__ == "__main__":

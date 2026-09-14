@@ -4,4 +4,3 @@ __pycache__/
 raw/
 derived.db
 predictions/
-.python-version

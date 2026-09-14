@@ -93,6 +93,12 @@ uncertainty, not a confirmation, even if the same sentence also lists a \
 player who genuinely is confirmed out. Use rotation_risk or \
 returning_from_injury for anything short of that.
 
+A player may appear more than once in your final classifications if your \
+sources genuinely disagree about them -- report every distinct piece of \
+evidence you found rather than picking one to report. Each occurrence \
+needs its own category, quote, and source_url, exactly like a single \
+classification would.
+
 Respond with exactly one JSON object per turn, and nothing else -- no \
 markdown fences, no prose outside the JSON. Valid actions:
 
@@ -404,19 +410,75 @@ def verify_classifications(raw_classifications, fetched_pages, valid_codes, oppo
     return [item for item in verified if item["code"] not in inconsistent_codes]
 
 
+def _blend_verified(items, category_rates):
+    """Blend one player's verified classifications into a single p_start,
+    weighted by claim count per category -- mirrors the private repo's
+    route_predictions_with_news, reimplemented here (not imported).
+
+    Returns (p_start, method, forced), or None if nothing in `items` is
+    priceable (the caller treats that the same as no evidence at all).
+
+    `forced=True` only for a unanimous confirmed_out set -- applies
+    regardless of any existing FPL-status decision (see
+    predict_club_agent), same as the private repo's own ordering (the
+    confirmed_out check happens before the availability-precedence check).
+    Otherwise `forced=False`: the mean of each priced item's
+    categories.category_to_p_start value (confirmed_out itself already
+    prices at exactly 0.0, so a *non-unanimous* set that includes it
+    correctly pulls the average down rather than being treated as
+    certain). `method` is "agent_<category>" when every priced item shares
+    one category, else "agent_blended".
+
+    Duplicate items (same quote after _normalize_for_substring_check) are
+    collapsed to one before weighting first -- syndicated/duplicate
+    content must not count twice toward the blend, same reasoning as the
+    private repo's own dedupe_claims fix.
+    """
+    deduped = []
+    seen_quotes = set()
+    for item in items:
+        key = _normalize_for_substring_check(item.get("quote") or "")
+        if key in seen_quotes:
+            continue
+        seen_quotes.add(key)
+        deduped.append(item)
+
+    categories_present = {item["category"] for item in deduped}
+    if categories_present == {"confirmed_out"}:
+        return 0.0, "agent_confirmed_out", True
+
+    priced = []
+    for item in deduped:
+        p = categories.category_to_p_start(item["category"], category_rates)
+        if p is not None:
+            priced.append((item["category"], p))
+    if not priced:
+        return None
+
+    p_start = sum(p for _, p in priced) / len(priced)
+    priced_categories = {category for category, _ in priced}
+    method = (
+        "agent_" + next(iter(priced_categories))
+        if len(priced_categories) == 1 else "agent_blended"
+    )
+    return p_start, method, False
+
+
 def predict_club_agent(conn, season, prior_season, target_round, team_name,
                         search_web=None, fetch_page_text=None, llm_client=None,
                         model=DEFAULT_MODEL, budget=None, fetch=None):
     """P(starts) for one club's roster, agent-adjusted. Returns the same
     shape as predict_gameweek_refined (code, web_name, p_start, cold_start,
-    n_observed, method) plus `category`/`quote`/`source_url` audit columns
-    (None where the agent found nothing) -- the extra columns are ignored
-    by derived._load_predictions but kept in the snapshot JSON for manual
-    review.
+    n_observed, method) plus an `evidence` audit column -- a JSON-encoded
+    list of `{category, quote, source_url}` dicts (one entry per distinct
+    classification contributing to this player's blend; None where the
+    agent found nothing at all). Ignored by derived._load_predictions but
+    kept in the snapshot JSON for manual review and (see
+    domain_stats.rebuild_evidence_table) per-source accuracy tracking.
     """
     roster = load_club_roster(conn, season, prior_season, target_round, team_name, fetch=fetch)
     if len(roster) == 0:
-        return roster.assign(category=None, quote=None, source_url=None)
+        return roster.assign(evidence=None)
 
     if llm_client is None:
         import anthropic
@@ -440,36 +502,41 @@ def predict_club_agent(conn, season, prior_season, target_round, team_name,
     anchor_method_by_code = roster.set_index("code")["method"]
 
     result = roster.copy()
-    result["category"] = None
-    result["quote"] = None
-    result["source_url"] = None
+    result["evidence"] = None
     result["method"] = "agent_fallback_no_news"
-
     by_code = result.set_index("code")
+
+    verified_by_code = {}
     for item in verified:
-        code = item["code"]
-        category = item["category"]
-        if category != "confirmed_out" and anchor_method_by_code.get(code) in _AVAILABILITY_DECIDED_METHODS:
+        verified_by_code.setdefault(item["code"], []).append(item)
+
+    for code, items in verified_by_code.items():
+        blended = _blend_verified(items, category_rates)
+        if blended is None:
+            continue
+        p_start, method, forced = blended
+        evidence_json = json.dumps([
+            {"category": item["category"], "quote": item["quote"],
+             "source_url": item.get("source_url")}
+            for item in items
+        ])
+
+        if not forced and anchor_method_by_code.get(code) in _AVAILABILITY_DECIDED_METHODS:
             # FPL status already made a real fitness-based call for this
             # player (injured/suspended/doubtful) -- a lower-confidence
-            # news classification doesn't get to override it. p_start stays
-            # at the anchor's own value (already copied into `result`); the
-            # audit columns and a dedicated method label still record what
-            # the agent found, so it's clear it deferred rather than found
-            # nothing at all.
+            # news classification doesn't get to override it (unanimous
+            # confirmed_out is the deliberate exception -- see
+            # _blend_verified). p_start stays at the anchor's own value
+            # (already copied into `result`); the evidence column and a
+            # dedicated method label still record what the agent found,
+            # so it's clear it deferred rather than found nothing at all.
             by_code.loc[code, "method"] = "agent_deferred_to_availability"
-            by_code.loc[code, "category"] = category
-            by_code.loc[code, "quote"] = item["quote"]
-            by_code.loc[code, "source_url"] = item.get("source_url")
+            by_code.loc[code, "evidence"] = evidence_json
             continue
-        p_start = categories.category_to_p_start(category, category_rates)
-        if p_start is None:
-            continue
+
         by_code.loc[code, "p_start"] = p_start
-        by_code.loc[code, "method"] = "agent_" + category
-        by_code.loc[code, "category"] = category
-        by_code.loc[code, "quote"] = item["quote"]
-        by_code.loc[code, "source_url"] = item.get("source_url")
+        by_code.loc[code, "method"] = method
+        by_code.loc[code, "evidence"] = evidence_json
 
     return by_code.reset_index()
 
@@ -529,7 +596,7 @@ def _main():
         frame = predict_club_agent(
             conn, season, prior_season, target_round, team_name, model=args.model,
         )
-        n_classified = int((frame["category"].notna()).sum())
+        n_classified = int((frame["evidence"].notna()).sum())
         print("  {0}: {1}/{2} players classified".format(
             team_name, n_classified, len(frame)
         ))
@@ -537,7 +604,7 @@ def _main():
     conn.close()
 
     combined = pd.concat(frames, ignore_index=True)
-    audit_cols = [c for c in ("category", "quote", "source_url") if c in combined.columns]
+    audit_cols = ["evidence"] if "evidence" in combined.columns else []
     snapshot_cols = ["code", "web_name", "p_start", "cold_start", "n_observed", "method"] + audit_cols
     path = starts_model.snapshot_predictions(
         combined[snapshot_cols], season, target_round,

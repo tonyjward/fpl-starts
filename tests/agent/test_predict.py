@@ -9,7 +9,9 @@ import sqlite3
 import pandas as pd
 import pytest
 
+from fpl_starts.agent.categories import CATEGORY_PRIORS
 from fpl_starts.agent.predict import (
+    _blend_verified,
     get_opponent,
     load_club_roster,
     predict_club_agent,
@@ -512,6 +514,89 @@ def test_verify_classifications_matches_regardless_of_case_and_whitespace():
 
 
 # --------------------------------------------------------------------------
+# _blend_verified
+# --------------------------------------------------------------------------
+
+
+def test_blend_verified_single_item_prices_at_the_category_prior():
+    result = _blend_verified(
+        [{"category": "rotation_risk", "quote": "q1"}], category_rates={},
+    )
+    assert result == (CATEGORY_PRIORS["rotation_risk"], "agent_rotation_risk", False)
+
+
+def test_blend_verified_unanimous_confirmed_out_forces_zero():
+    result = _blend_verified(
+        [{"category": "confirmed_out", "quote": "q1"},
+         {"category": "confirmed_out", "quote": "q2"}],
+        category_rates={},
+    )
+    assert result == (0.0, "agent_confirmed_out", True)
+
+
+def test_blend_verified_two_disagreeing_categories_is_the_mean_and_not_forced():
+    result = _blend_verified(
+        [{"category": "confirmed_starting", "quote": "q1"},
+         {"category": "rotation_risk", "quote": "q2"}],
+        category_rates={},
+    )
+    p_start, method, forced = result
+    expected = (CATEGORY_PRIORS["confirmed_starting"] + CATEGORY_PRIORS["rotation_risk"]) / 2
+    assert p_start == pytest.approx(expected)
+    assert method == "agent_blended"
+    assert forced is False
+
+
+def test_blend_verified_mixed_set_including_confirmed_out_is_not_forced():
+    """A *mixed* set containing confirmed_out alongside another category is
+    not unanimous -- it goes through the normal weighted blend (where
+    confirmed_out prices at 0.0, pulling the average down) rather than
+    being treated as a certain hard gate.
+    """
+    result = _blend_verified(
+        [{"category": "confirmed_out", "quote": "q1"},
+         {"category": "confirmed_starting", "quote": "q2"}],
+        category_rates={},
+    )
+    p_start, method, forced = result
+    expected = (0.0 + CATEGORY_PRIORS["confirmed_starting"]) / 2
+    assert p_start == pytest.approx(expected)
+    assert method == "agent_blended"
+    assert forced is False
+
+
+def test_blend_verified_duplicate_quotes_count_once_not_twice():
+    """Same quote (post-normalization) reported twice must not get double
+    weight in the blend -- same reasoning as the private repo's own
+    dedupe_claims fix for syndicated content.
+    """
+    result = _blend_verified(
+        [{"category": "confirmed_starting", "quote": "He will start on Saturday."},
+         {"category": "rotation_risk", "quote": "he WILL start on saturday."}],
+        category_rates={},
+    )
+    # both items normalize to the same quote -> only the first survives,
+    # so this is a single confirmed_starting classification, not a blend.
+    assert result == (CATEGORY_PRIORS["confirmed_starting"], "agent_confirmed_starting", False)
+
+
+def test_blend_verified_unknown_category_is_skipped_not_fatal():
+    result = _blend_verified(
+        [{"category": "mystery_category", "quote": "q1"},
+         {"category": "rotation_risk", "quote": "q2"}],
+        category_rates={},
+    )
+    assert result == (CATEGORY_PRIORS["rotation_risk"], "agent_rotation_risk", False)
+
+
+def test_blend_verified_returns_none_when_nothing_priceable():
+    result = _blend_verified(
+        [{"category": "mystery_category", "quote": "q1"}], category_rates={},
+    )
+    assert result is None
+
+
+# --------------------------------------------------------------------------
 # predict_club_agent (end to end, all fakes)
 # --------------------------------------------------------------------------
 
@@ -551,9 +636,11 @@ def test_predict_club_agent_applies_verified_classification_and_falls_back_other
     bob = frame[frame["code"] == 1002].iloc[0]
     assert alice["method"] == "agent_confirmed_starting"
     assert alice["p_start"] == pytest.approx(0.90)  # unshrunk prior, no history yet
-    assert alice["quote"] == quote
+    assert json.loads(alice["evidence"]) == [
+        {"category": "confirmed_starting", "quote": quote, "source_url": "https://a"},
+    ]
     assert bob["method"] == "agent_fallback_no_news"
-    assert bob["category"] is None
+    assert bob["evidence"] is None
 
 
 def test_predict_club_agent_confirmed_out_hard_gates_to_zero(tmp_path):
@@ -628,8 +715,9 @@ def test_predict_club_agent_defers_to_an_existing_fpl_hard_gate(tmp_path):
     row = frame[frame["code"] == 1001].iloc[0]
     assert row["p_start"] == 0.0  # unchanged -- the anchor's own hard gate
     assert row["method"] == "agent_deferred_to_availability"
-    assert row["category"] == "rotation_risk"  # still recorded, just not applied
-    assert row["quote"] == quote
+    assert json.loads(row["evidence"]) == [
+        {"category": "rotation_risk", "quote": quote, "source_url": "https://a"},
+    ]  # still recorded, just not applied
 
 
 def test_predict_club_agent_confirmed_out_still_applies_over_an_existing_hard_gate(tmp_path):
@@ -668,6 +756,90 @@ def test_predict_club_agent_confirmed_out_still_applies_over_an_existing_hard_ga
     row = frame[frame["code"] == 1001].iloc[0]
     assert row["p_start"] == 0.0
     assert row["method"] == "agent_confirmed_out"  # applied, not deferred
+
+
+def test_predict_club_agent_blends_two_disagreeing_sources_for_one_player(tmp_path):
+    rows = [{"element": 1, "GW": g, "starts": 1} for g in range(1, 39)]
+    fetch = make_fake_fetch({
+        PRIOR_SEASON + "/gws/merged_gw.csv": merged_gw_csv(rows),
+        PRIOR_SEASON + "/players_raw.csv": players_raw_csv([(1, 1001)]),
+    })
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[(1001, "Alice", 1)],
+        teams_rows=[(1, "Leeds")],
+        gameweek_rows=[(1001, SEASON, 1, 1)],
+    )
+    quote_a = "Alice will start on Saturday, the manager confirmed."
+    quote_b = "Alice is a doubt for the weekend with a knock."
+    responses = [
+        json.dumps({"action": "fetch_page_text", "url": "https://a"}),
+        json.dumps({"action": "fetch_page_text", "url": "https://b"}),
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "confirmed_starting",
+             "quote": quote_a, "source_url": "https://a"},
+            {"code": 1001, "category": "rotation_risk",
+             "quote": quote_b, "source_url": "https://b"},
+        ]}),
+    ]
+    client = FakeAnthropicClient(responses)
+    pages = {"https://a": quote_a, "https://b": quote_b}
+
+    frame = predict_club_agent(
+        conn, SEASON, PRIOR_SEASON, 2, "Leeds",
+        llm_client=client, fetch_page_text=lambda url: pages[url], fetch=fetch,
+    )
+    conn.close()
+
+    row = frame[frame["code"] == 1001].iloc[0]
+    expected = (CATEGORY_PRIORS["confirmed_starting"] + CATEGORY_PRIORS["rotation_risk"]) / 2
+    assert row["p_start"] == pytest.approx(expected)
+    assert row["method"] == "agent_blended"
+    assert len(json.loads(row["evidence"])) == 2
+
+
+def test_predict_club_agent_mixed_confirmed_out_not_unanimous_still_defers(tmp_path):
+    """A mixed set (confirmed_out alongside another category) is not
+    unanimous, so it does NOT get the forced-apply exception -- it's
+    subject to the same availability-precedence check as anything else.
+    """
+    rows = [{"element": 1, "GW": g, "starts": 1} for g in range(1, 39)]
+    fetch = make_fake_fetch({
+        PRIOR_SEASON + "/gws/merged_gw.csv": merged_gw_csv(rows),
+        PRIOR_SEASON + "/players_raw.csv": players_raw_csv([(1, 1001)]),
+    })
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[(1001, "Alice", 1)],
+        teams_rows=[(1, "Leeds")],
+        gameweek_rows=[(1001, SEASON, 1, 1)],
+        availability_rows=[(1001, SEASON, "20260101T000000Z", 2, "i", None)],
+    )
+    quote_a = "Alice is ruled out for Saturday."
+    quote_b = "Alice will start on Saturday, the manager confirmed."
+    responses = [
+        json.dumps({"action": "fetch_page_text", "url": "https://a"}),
+        json.dumps({"action": "fetch_page_text", "url": "https://b"}),
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "confirmed_out",
+             "quote": quote_a, "source_url": "https://a"},
+            {"code": 1001, "category": "confirmed_starting",
+             "quote": quote_b, "source_url": "https://b"},
+        ]}),
+    ]
+    client = FakeAnthropicClient(responses)
+    pages = {"https://a": quote_a, "https://b": quote_b}
+
+    frame = predict_club_agent(
+        conn, SEASON, PRIOR_SEASON, 2, "Leeds",
+        llm_client=client, fetch_page_text=lambda url: pages[url], fetch=fetch,
+    )
+    conn.close()
+
+    row = frame[frame["code"] == 1001].iloc[0]
+    assert row["p_start"] == 0.0  # unchanged -- the anchor's own hard gate wins
+    assert row["method"] == "agent_deferred_to_availability"
+    assert len(json.loads(row["evidence"])) == 2  # both still recorded
 
 
 def test_predict_club_agent_applies_normally_when_anchor_has_no_availability_decision(tmp_path):

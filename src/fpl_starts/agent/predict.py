@@ -61,6 +61,19 @@ A player with no supporting evidence gets no classification at all -- do \
 not guess. Never estimate a probability yourself; only ever return a \
 category and the exact quote that supports it.
 
+You will be told which fixture (opponent club) you are gathering evidence \
+for. Every claim must be about *that* fixture specifically -- articles get \
+reused or resurface from a different game, so classify a claim only if the \
+article is clearly about the fixture you were given, not an old or \
+unrelated one.
+
+Every classification also needs a content_type, classified honestly \
+regardless of what category you picked: "team_news" if the article is \
+forward-looking (previewing the upcoming match), or "match_report" if it \
+describes a match that has already been played (e.g. reporting a player \
+was substituted or sent off in a *previous* game -- that is not evidence \
+about the *next* one, even if it looks like it at a glance).
+
 Respond with exactly one JSON object per turn, and nothing else -- no \
 markdown fences, no prose outside the JSON. Valid actions:
 
@@ -68,6 +81,8 @@ markdown fences, no prose outside the JSON. Valid actions:
 {{"action": "fetch_page_text", "url": "..."}}
 {{"action": "final_answer", "classifications": [
   {{"code": <player code, integer>, "category": "<one of the categories above>", \
+"content_type": "team_news or match_report", \
+"opponent": "<the opponent club the article is about, or an empty string if none is named>", \
 "quote": "<verbatim quote from a fetched page>", "source_url": "<the url that quote came from>"}}
 ]}}
 
@@ -76,6 +91,48 @@ fetch_page_text -- not paraphrased, not from a search snippet alone. \
 Omit any player you found no evidence for; they are handled separately. \
 Call final_answer once you've covered the roster or have used your \
 available tool calls.""".format(taxonomy=TAXONOMY_DESCRIPTIONS)
+
+
+# Curly/smart quote variants mapped to their plain-ASCII equivalents --
+# confirmed as a real bug in the private repo's own news pipeline: a source
+# article using curly quotes made a straight-quote substring check fail on
+# an otherwise byte-correct citation, silently rejecting every claim from
+# that article. Not a fabrication risk to normalize away: the words
+# themselves are unchanged, only the character variant.
+_QUOTE_CHAR_MAP = {
+    "‘": "'", "’": "'",
+    "“": '"', "”": '"',
+}
+
+
+def _normalize_for_substring_check(text):
+    """Lowercased, whitespace-collapsed, quote-character-normalized form of
+    `text`, used only to compare a claimed quote against the page it's
+    supposed to have come from -- not stored anywhere, the classification's
+    own `quote` field keeps the original text for display/audit.
+    """
+    text = text or ""
+    for curly, straight in _QUOTE_CHAR_MAP.items():
+        text = text.replace(curly, straight)
+    return " ".join(text.lower().split())
+
+
+def get_opponent(conn, season, target_round, team_name):
+    """The opponent club name for `team_name`'s fixture in `target_round`,
+    or None if no fixture is recorded (e.g. a blank gameweek). Used both to
+    tell the agent which fixture it's gathering evidence for and to verify
+    a returned `opponent` field isn't about some other game.
+    """
+    row = pd.read_sql(
+        "SELECT t2.name AS opponent FROM fixtures f "
+        "JOIN teams t1 ON t1.code = f.team_code "
+        "JOIN teams t2 ON t2.code = f.opponent_code "
+        "WHERE f.season = ? AND f.round = ? AND t1.name = ?",
+        conn, params=(season, target_round, team_name),
+    )
+    if len(row) == 0:
+        return None
+    return row["opponent"].iloc[0]
 
 
 def _strip_json_fences(text):
@@ -122,9 +179,16 @@ def load_club_roster(conn, season, prior_season, target_round, team_name, fetch=
     return merged[merged["team"] == team_name].drop(columns=["team"]).reset_index(drop=True)
 
 
-def run_agent_loop(llm_client, model, team_name, roster, budget,
+def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=None,
                     search_web=None, fetch_page_text=None, max_turns=12):
     """The manual ReAct loop -- see module docstring for why it's manual.
+
+    `opponent_name` (from get_opponent) tells the model which fixture it's
+    gathering evidence for, so it can tell a genuinely current article from
+    a stale or reused one about a different game -- None if no fixture is
+    known for this round (the model is told evidence can't be fixture-
+    checked, which the caller should treat as a reason to be more, not
+    less, skeptical of what comes back).
 
     Returns (classifications, fetched_pages): `classifications` is the raw
     list of dicts the model returned via final_answer (unverified --
@@ -143,7 +207,15 @@ def run_agent_loop(llm_client, model, team_name, roster, budget,
         "code={0} name={1}".format(row.code, row.web_name)
         for row in roster.itertuples()
     )
-    initial = "Club: {0}\nRoster:\n{1}".format(team_name, roster_desc)
+    if opponent_name:
+        fixture_line = "Next fixture: {0} vs {1}\n".format(team_name, opponent_name)
+    else:
+        fixture_line = (
+            "Next fixture: unknown -- no fixture is recorded for this round, "
+            "so you cannot fixture-check any claim you find. Be more "
+            "cautious about staleness as a result.\n"
+        )
+    initial = "Club: {0}\n{1}Roster:\n{2}".format(team_name, fixture_line, roster_desc)
     messages = [{"role": "user", "content": initial}]
     fetched_pages = {}
 
@@ -209,22 +281,39 @@ def run_agent_loop(llm_client, model, team_name, roster, budget,
     return [], fetched_pages
 
 
-def verify_classifications(raw_classifications, fetched_pages, valid_codes):
-    """Keep only classifications whose quote is an exact substring of the
-    page the agent says it came from, and whose code is actually on the
-    roster. Discarding on failure here -- not trusting a model's citation
-    at face value -- is the non-LLM self-check that catches a citation the
-    model paraphrased or invented outright.
+def verify_classifications(raw_classifications, fetched_pages, valid_codes, opponent_name=None):
+    """Keep only classifications whose quote is an exact (normalized)
+    substring of the page the agent says it came from, whose code is
+    actually on the roster, whose content_type is forward-looking (not a
+    report of an already-played match), and whose named opponent -- if any
+    -- matches the fixture actually being predicted for.
+
+    Discarding on failure here -- not trusting a model's citation or
+    self-classification at face value -- is the non-LLM self-check that
+    catches a citation the model paraphrased or invented outright, or a
+    stale/wrong-fixture article it didn't recognize as such. `opponent_name`
+    of None (no fixture on record for this round -- see run_agent_loop)
+    means the opponent check is skipped entirely, same as an empty claimed
+    opponent: absence of a check is never itself a mismatch.
     """
     verified = []
     for item in raw_classifications:
         code = item.get("code")
         quote = item.get("quote") or ""
         source_url = item.get("source_url") or ""
+        content_type = item.get("content_type") or "team_news"
+        claimed_opponent = (item.get("opponent") or "").strip()
+
         if code not in valid_codes:
             continue
+        if content_type == "match_report":
+            continue
+        if opponent_name and claimed_opponent and claimed_opponent.lower() != opponent_name.lower():
+            continue
         page_text = fetched_pages.get(source_url)
-        if not page_text or quote not in page_text:
+        if not page_text:
+            continue
+        if _normalize_for_substring_check(quote) not in _normalize_for_substring_check(page_text):
             continue
         verified.append(item)
     return verified
@@ -252,12 +341,14 @@ def predict_club_agent(conn, season, prior_season, target_round, team_name,
     if budget is None:
         budget = ToolBudget()
 
+    opponent_name = get_opponent(conn, season, target_round, team_name)
+
     raw_classifications, fetched_pages = run_agent_loop(
-        llm_client, model, team_name, roster, budget,
+        llm_client, model, team_name, roster, budget, opponent_name=opponent_name,
         search_web=search_web, fetch_page_text=fetch_page_text,
     )
     verified = verify_classifications(
-        raw_classifications, fetched_pages, set(roster["code"])
+        raw_classifications, fetched_pages, set(roster["code"]), opponent_name=opponent_name,
     )
 
     category_rates = categories.fit_category_rates(conn, season, target_round)

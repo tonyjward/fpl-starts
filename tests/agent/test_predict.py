@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from fpl_starts.agent.predict import (
+    get_opponent,
     load_club_roster,
     predict_club_agent,
     run_agent_loop,
@@ -39,8 +40,11 @@ def players_raw_csv(id_code_pairs):
     ).to_csv(index=False).encode("utf-8")
 
 
-def make_derived_db(path, players, teams_rows, gameweek_rows):
-    """players: (code, web_name, team_code). teams_rows: (code, name)."""
+def make_derived_db(path, players, teams_rows, gameweek_rows, fixtures_rows=None):
+    """players: (code, web_name, team_code). teams_rows: (code, name).
+    fixtures_rows: (season, round, team_code, opponent_code) -- one row per
+    side, same as fpl_starts.derived's real _load_fixtures output.
+    """
     conn = sqlite3.connect(path)
     conn.execute(
         "CREATE TABLE players (code INTEGER PRIMARY KEY, web_name TEXT, "
@@ -63,6 +67,12 @@ def make_derived_db(path, players, teams_rows, gameweek_rows):
     )
     conn.execute(
         "CREATE TABLE predictions (code, season, target_round, model_version, method)"
+    )
+    conn.execute(
+        "CREATE TABLE fixtures (season, round, team_code, opponent_code)"
+    )
+    conn.executemany(
+        "INSERT INTO fixtures VALUES (?, ?, ?, ?)", fixtures_rows or []
     )
     conn.commit()
     return conn
@@ -107,6 +117,27 @@ def fake_roster():
 # --------------------------------------------------------------------------
 # load_club_roster
 # --------------------------------------------------------------------------
+
+
+def test_get_opponent_resolves_from_fixtures_table(tmp_path):
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[], teams_rows=[(1, "Leeds"), (2, "Newcastle")],
+        gameweek_rows=[],
+        fixtures_rows=[(SEASON, 4, 1, 2), (SEASON, 4, 2, 1)],
+    )
+    assert get_opponent(conn, SEASON, 4, "Leeds") == "Newcastle"
+    assert get_opponent(conn, SEASON, 4, "Newcastle") == "Leeds"
+    conn.close()
+
+
+def test_get_opponent_none_when_no_fixture_recorded(tmp_path):
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[], teams_rows=[(1, "Leeds")], gameweek_rows=[],
+    )
+    assert get_opponent(conn, SEASON, 4, "Leeds") is None
+    conn.close()
 
 
 def test_load_club_roster_filters_to_one_club(tmp_path):
@@ -197,6 +228,25 @@ def test_run_agent_loop_search_budget_exceeded_is_surfaced_not_raised():
     assert search_calls == ["q1"]  # second search was refused, never called
 
 
+def test_run_agent_loop_includes_opponent_in_initial_prompt_when_known():
+    client = FakeAnthropicClient([
+        json.dumps({"action": "final_answer", "classifications": []}),
+    ])
+    run_agent_loop(client, "fake-model", "Leeds", fake_roster(), ToolBudget(),
+                    opponent_name="Newcastle")
+    first_call_messages = client.messages.calls[0]["messages"]
+    assert "Newcastle" in first_call_messages[0]["content"]
+
+
+def test_run_agent_loop_flags_unknown_fixture_when_opponent_not_given():
+    client = FakeAnthropicClient([
+        json.dumps({"action": "final_answer", "classifications": []}),
+    ])
+    run_agent_loop(client, "fake-model", "Leeds", fake_roster(), ToolBudget())
+    first_call_messages = client.messages.calls[0]["messages"]
+    assert "unknown" in first_call_messages[0]["content"]
+
+
 def test_run_agent_loop_gives_up_after_max_turns_without_final_answer():
     responses = [json.dumps({"action": "search_web", "query": "q"})] * 3
     client = FakeAnthropicClient(responses)
@@ -250,6 +300,103 @@ def test_verify_classifications_discards_unfetched_source_url():
         fetched_pages={}, valid_codes={1001},
     )
     assert result == []
+
+
+def test_verify_classifications_discards_match_report_content_type():
+    fetched = {"https://a": "Alice was sent off in yesterday's match."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_out", "content_type": "match_report",
+          "quote": "was sent off in yesterday's match", "source_url": "https://a"}],
+        fetched, valid_codes={1001},
+    )
+    assert result == []
+
+
+def test_verify_classifications_keeps_team_news_content_type():
+    fetched = {"https": "Alice will start on Saturday."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_starting", "content_type": "team_news",
+          "quote": "will start on Saturday", "source_url": "https"}],
+        fetched, valid_codes={1001},
+    )
+    assert len(result) == 1
+
+
+def test_verify_classifications_missing_content_type_defaults_to_kept():
+    """No content_type field at all (e.g. an older/partial response) should
+    not itself be a reason to discard -- only an explicit match_report is.
+    """
+    fetched = {"https": "Alice will start on Saturday."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_starting",
+          "quote": "will start on Saturday", "source_url": "https"}],
+        fetched, valid_codes={1001},
+    )
+    assert len(result) == 1
+
+
+def test_verify_classifications_discards_wrong_opponent():
+    fetched = {"https": "Alice will miss the trip to Crystal Palace."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_out", "opponent": "Crystal Palace",
+          "quote": "will miss the trip to Crystal Palace", "source_url": "https"}],
+        fetched, valid_codes={1001}, opponent_name="Newcastle",
+    )
+    assert result == []
+
+
+def test_verify_classifications_keeps_matching_opponent_case_insensitive():
+    fetched = {"https": "Alice will start against newcastle."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_starting", "opponent": "NEWCASTLE",
+          "quote": "will start against newcastle", "source_url": "https"}],
+        fetched, valid_codes={1001}, opponent_name="Newcastle",
+    )
+    assert len(result) == 1
+
+
+def test_verify_classifications_empty_opponent_is_never_a_mismatch():
+    fetched = {"https": "Alice will start this weekend."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_starting", "opponent": "",
+          "quote": "will start this weekend", "source_url": "https"}],
+        fetched, valid_codes={1001}, opponent_name="Newcastle",
+    )
+    assert len(result) == 1
+
+
+def test_verify_classifications_no_known_opponent_skips_the_check():
+    """opponent_name=None (no fixture on record) means the opponent check
+    is skipped entirely -- a claimed opponent is neither confirmed nor
+    contradicted when there's nothing to check it against.
+    """
+    fetched = {"https": "Alice will miss the trip to Crystal Palace."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_out", "opponent": "Crystal Palace",
+          "quote": "will miss the trip to Crystal Palace", "source_url": "https"}],
+        fetched, valid_codes={1001}, opponent_name=None,
+    )
+    assert len(result) == 1
+
+
+def test_verify_classifications_matches_curly_quotes_against_straight():
+    fetched = {"https": "Alice ‘will start’ on Saturday, he said."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_starting",
+          "quote": "'will start' on Saturday", "source_url": "https"}],
+        fetched, valid_codes={1001},
+    )
+    assert len(result) == 1
+
+
+def test_verify_classifications_matches_regardless_of_case_and_whitespace():
+    fetched = {"https": "Alice will\n  start   on Saturday."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_starting",
+          "quote": "WILL START ON saturday", "source_url": "https"}],
+        fetched, valid_codes={1001},
+    )
+    assert len(result) == 1
 
 
 # --------------------------------------------------------------------------

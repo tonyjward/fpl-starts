@@ -1,0 +1,13 @@
+Metadata-Version: 2.1
+Name: fpl-starts
+Version: 0.1.0
+Summary: P(starts): FPL archiver, derived layer, base lookup-table model, and calibration harness
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+
+# fpl-starts
+
+P(starts) model for Fantasy Premier League: archives the live FPL API,
+derives a queryable SQLite layer, and predicts P(starts) via a validated
+walk-forward lookup table. (README to be rewritten properly once the model
+code is trimmed down to just this package's scope.)

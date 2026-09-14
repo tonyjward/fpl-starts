@@ -1,0 +1,29 @@
+[project]
+name = "fpl-starts"
+version = "0.1.0"
+description = "P(starts): FPL archiver, derived layer, base lookup-table model, and calibration harness"
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = [
+    "pandas>=1.1.5",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+fpl-starts-archive = "fpl_starts.archiver:_main"
+fpl-starts-derive = "fpl_starts.derived:_main"
+fpl-starts-predict = "fpl_starts.starts_model:_main"
+fpl-starts-score = "fpl_starts.scoring:_main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[dependency-groups]
+dev = ["pytest>=7.4.4"]

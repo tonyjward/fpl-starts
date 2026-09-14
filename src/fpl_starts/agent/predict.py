@@ -246,7 +246,9 @@ def predict_club_agent(conn, season, prior_season, target_round, team_name,
 
     if llm_client is None:
         import anthropic
-        llm_client = anthropic.Anthropic()
+        workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+        headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
+        llm_client = anthropic.Anthropic(default_headers=headers)
     if budget is None:
         budget = ToolBudget()
 

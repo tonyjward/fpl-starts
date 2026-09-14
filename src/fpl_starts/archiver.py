@@ -2,8 +2,8 @@
 
 Writes every fetched payload byte-for-byte to a write-once, gzip-compressed
 file and appends one line to a per-season manifest. See
-docs/build_spec_minutes_model.md Section 2.3a and docs/README.md, "Raw
-archiver", for the full spec this implements.
+docs/build_spec_minutes_model.md Section 2.3a for the full spec this
+implements.
 
 Two invariants everything downstream depends on:
   - the raw layer is never parsed, edited, or overwritten -- only appended to.
@@ -368,8 +368,8 @@ def archive_event_live(gw, events, http_get, season, base_dir=RAW_DIR,
     """Archive event/{gw}/live, gated on `data_checked` for that gameweek.
 
     Capturing on `finished` instead would risk freezing provisional bonus
-    permanently, since nothing re-reads it later (docs/README.md Section
-    8a). Returns None without fetching anything if the gameweek isn't
+    permanently, since nothing re-reads it later (docs/build_spec_minutes_model.md
+    Section 8a). Returns None without fetching anything if the gameweek isn't
     verified yet.
     """
     if not is_data_checked(events, gw):

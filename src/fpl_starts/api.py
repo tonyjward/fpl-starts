@@ -1,8 +1,7 @@
 """Thin client for the public FPL API.
 
-The API rejects requests that don't look like they come from a browser
-(docs/spec_v3.odt §3.2), so every request goes through a session carrying a
-real User-Agent.
+The API rejects requests that don't look like they come from a browser, so
+every request goes through a session carrying a real User-Agent.
 """
 
 import requests

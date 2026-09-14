@@ -1,30 +1,25 @@
 # fpl-starts
 
 Fantasy Premier League has over 11 million players. Each of them owns a
-15-player squad and makes two decisions every week: which transfers to make,
-and which 11 of the 15 to start. Both decisions turn on the same question --
-will this player actually take the pitch. Get it wrong and the player scores
-nothing from that slot -- no goal, no clean sheet, no bonus -- and if he's
-captained, the doubled points are gone too. A transfer spent on someone who
-then sits on the bench is a wasted transfer.
+15-player squad and makes two decisions every week: 
+* which transfers to make,
+* which 11 of the 15 to start. 
+Having a robust estimate of the probability of starting the next game
+is valuable information for FPL players, as it allows better decisions.
+You don't want to captain/buy/transfer players that are not going to be
+involved in the game.
 
-The only signal the game gives for this is `chance_of_playing_next_round`, a
-flag on the player's card (25/50/75/100). It measures fitness/injury risk, not
-selection -- it can't tell a nailed-on starter from a fourth-choice option,
-because that was never what it was built to answer.
+The FPL app does provide a `chance_of_playing_next_round` which takes
+values (25/50/75/100). However this only measures whether a player
+is available to be picked (injured players are less likely). It does
+not tell us if the manager will drop the player due to poor performance,
+or to rotate the squad.
 
-The objective is P(starts) for the full pool -- around 620 players, not
-just the 15 in one manager's own squad. A transfer target needs the same
-estimate a current player does, and 15 players a week isn't enough outcomes
-to tell whether a model is actually any good.
-
-This repo is also where different approaches to that estimate get
-benchmarked against each other, rather than assumed better because they
-sound more sophisticated. The first arm uses nothing but a player's own
-recent starts. A second layers FPL's own injury/status flag on top. A
-third, not yet built, replaces that flag with an agent that reads team news
-itself and updates the estimate from what it finds. Each is scored against
-the same real outcomes before it's trusted.
+The aim of this project is to produce P(start) for all Premier League
+players. We will be testing 3 model variants
+1) Only a players recent history
+2) Layers on FPL's own injury status flag on top of 1.
+3) Layer on an adjustement to 2 for team news. We will use an Agent for this
 
 ## What's here
 

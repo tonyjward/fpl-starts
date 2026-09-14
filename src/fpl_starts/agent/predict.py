@@ -38,6 +38,18 @@ from fpl_starts.agent.tools import ToolBudget, ToolBudgetExceeded
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
 
+# Methods on the anchor (refined_availability's own output) that represent
+# an actual FPL-fitness-based decision -- a news/agent classification must
+# never override these, same precedence rule the private repo's own
+# route_predictions_with_news uses (`decided_codes`). confirmed_out is the
+# one deliberate exception (see predict_club_agent): it still applies on
+# top of an existing decided row, since 0.0 is either consistent with an
+# existing gate or catches a fresh claim FPL's own flag hasn't updated for
+# yet -- everything else defers to the fitness assessment already made.
+_AVAILABILITY_DECIDED_METHODS = frozenset(
+    ["hard_gate_unavailable", "flag_table", "flag_table_pooled"]
+)
+
 TAXONOMY_DESCRIPTIONS = (
     "confirmed_starting -- a manager, press conference, or predicted lineup "
     "names this player in the starting XI for the upcoming fixture.\n"
@@ -425,6 +437,7 @@ def predict_club_agent(conn, season, prior_season, target_round, team_name,
     )
 
     category_rates = categories.fit_category_rates(conn, season, target_round)
+    anchor_method_by_code = roster.set_index("code")["method"]
 
     result = roster.copy()
     result["category"] = None
@@ -436,6 +449,19 @@ def predict_club_agent(conn, season, prior_season, target_round, team_name,
     for item in verified:
         code = item["code"]
         category = item["category"]
+        if category != "confirmed_out" and anchor_method_by_code.get(code) in _AVAILABILITY_DECIDED_METHODS:
+            # FPL status already made a real fitness-based call for this
+            # player (injured/suspended/doubtful) -- a lower-confidence
+            # news classification doesn't get to override it. p_start stays
+            # at the anchor's own value (already copied into `result`); the
+            # audit columns and a dedicated method label still record what
+            # the agent found, so it's clear it deferred rather than found
+            # nothing at all.
+            by_code.loc[code, "method"] = "agent_deferred_to_availability"
+            by_code.loc[code, "category"] = category
+            by_code.loc[code, "quote"] = item["quote"]
+            by_code.loc[code, "source_url"] = item.get("source_url")
+            continue
         p_start = categories.category_to_p_start(category, category_rates)
         if p_start is None:
             continue

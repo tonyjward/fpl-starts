@@ -40,10 +40,12 @@ def players_raw_csv(id_code_pairs):
     ).to_csv(index=False).encode("utf-8")
 
 
-def make_derived_db(path, players, teams_rows, gameweek_rows, fixtures_rows=None):
+def make_derived_db(path, players, teams_rows, gameweek_rows, fixtures_rows=None,
+                     availability_rows=None):
     """players: (code, web_name, team_code). teams_rows: (code, name).
     fixtures_rows: (season, round, team_code, opponent_code) -- one row per
     side, same as fpl_starts.derived's real _load_fixtures output.
+    availability_rows: (code, season, fetched_at, next_gw, status, chance).
     """
     conn = sqlite3.connect(path)
     conn.execute(
@@ -64,6 +66,10 @@ def make_derived_db(path, players, teams_rows, gameweek_rows, fixtures_rows=None
     conn.execute(
         "CREATE TABLE player_availability_snapshots "
         "(code, season, fetched_at, next_gw, status, chance_of_playing_next_round)"
+    )
+    conn.executemany(
+        "INSERT INTO player_availability_snapshots VALUES (?, ?, ?, ?, ?, ?)",
+        availability_rows or [],
     )
     conn.execute(
         "CREATE TABLE predictions (code, season, target_round, model_version, method)"
@@ -581,6 +587,125 @@ def test_predict_club_agent_confirmed_out_hard_gates_to_zero(tmp_path):
     row = frame[frame["code"] == 1001].iloc[0]
     assert row["p_start"] == 0.0
     assert row["method"] == "agent_confirmed_out"
+
+
+def test_predict_club_agent_defers_to_an_existing_fpl_hard_gate(tmp_path):
+    """A rotation_risk (or any non-confirmed_out) classification must not
+    override a player FPL's own status already hard-gated to 0 -- same
+    precedence the private repo's route_predictions_with_news uses.
+    """
+    rows = [{"element": 1, "GW": g, "starts": 1} for g in range(1, 39)]
+    fetch = make_fake_fetch({
+        PRIOR_SEASON + "/gws/merged_gw.csv": merged_gw_csv(rows),
+        PRIOR_SEASON + "/players_raw.csv": players_raw_csv([(1, 1001)]),
+    })
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[(1001, "Alice", 1)],
+        teams_rows=[(1, "Leeds")],
+        gameweek_rows=[(1001, SEASON, 1, 1)],
+        # status "i" (injured) at next_gw=2 -> predict_gameweek_refined
+        # hard-gates Alice to 0.0 for target_round=2 before the agent
+        # even runs.
+        availability_rows=[(1001, SEASON, "20260101T000000Z", 2, "i", None)],
+    )
+    quote = "Alice could be rotated for Saturday's game."
+    responses = [
+        json.dumps({"action": "fetch_page_text", "url": "https://a"}),
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "rotation_risk",
+             "quote": quote, "source_url": "https://a"},
+        ]}),
+    ]
+    client = FakeAnthropicClient(responses)
+
+    frame = predict_club_agent(
+        conn, SEASON, PRIOR_SEASON, 2, "Leeds",
+        llm_client=client, fetch_page_text=lambda url: quote, fetch=fetch,
+    )
+    conn.close()
+
+    row = frame[frame["code"] == 1001].iloc[0]
+    assert row["p_start"] == 0.0  # unchanged -- the anchor's own hard gate
+    assert row["method"] == "agent_deferred_to_availability"
+    assert row["category"] == "rotation_risk"  # still recorded, just not applied
+    assert row["quote"] == quote
+
+
+def test_predict_club_agent_confirmed_out_still_applies_over_an_existing_hard_gate(tmp_path):
+    """confirmed_out is the deliberate exception to the precedence rule --
+    it applies regardless, same as the private repo's ordering (the
+    confirmed_out check happens before the decided-status check).
+    """
+    rows = [{"element": 1, "GW": g, "starts": 1} for g in range(1, 39)]
+    fetch = make_fake_fetch({
+        PRIOR_SEASON + "/gws/merged_gw.csv": merged_gw_csv(rows),
+        PRIOR_SEASON + "/players_raw.csv": players_raw_csv([(1, 1001)]),
+    })
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[(1001, "Alice", 1)],
+        teams_rows=[(1, "Leeds")],
+        gameweek_rows=[(1001, SEASON, 1, 1)],
+        availability_rows=[(1001, SEASON, "20260101T000000Z", 2, "i", None)],
+    )
+    quote = "Alice is definitely out for Saturday."
+    responses = [
+        json.dumps({"action": "fetch_page_text", "url": "https://a"}),
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "confirmed_out",
+             "quote": quote, "source_url": "https://a"},
+        ]}),
+    ]
+    client = FakeAnthropicClient(responses)
+
+    frame = predict_club_agent(
+        conn, SEASON, PRIOR_SEASON, 2, "Leeds",
+        llm_client=client, fetch_page_text=lambda url: quote, fetch=fetch,
+    )
+    conn.close()
+
+    row = frame[frame["code"] == 1001].iloc[0]
+    assert row["p_start"] == 0.0
+    assert row["method"] == "agent_confirmed_out"  # applied, not deferred
+
+
+def test_predict_club_agent_applies_normally_when_anchor_has_no_availability_decision(tmp_path):
+    """The precedence check only ever blocks the three
+    _AVAILABILITY_DECIDED_METHODS values -- an ordinary cal_rolling_xseason
+    anchor (no FPL-status decision at all) is fair game for the agent.
+    """
+    rows = [{"element": i, "GW": g, "starts": 1} for i in (1, 2) for g in range(1, 39)]
+    fetch = make_fake_fetch({
+        PRIOR_SEASON + "/gws/merged_gw.csv": merged_gw_csv(rows),
+        PRIOR_SEASON + "/players_raw.csv": players_raw_csv([(1, 1001), (2, 1002)]),
+    })
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[(1001, "Alice", 1)],
+        teams_rows=[(1, "Leeds")],
+        gameweek_rows=[(1001, SEASON, 1, 1)],
+        # No availability_rows at all -- predict_gameweek_refined falls
+        # back to the plain lookup table, method="cal_rolling_xseason".
+    )
+    quote = "Alice could be rotated for Saturday's game."
+    responses = [
+        json.dumps({"action": "fetch_page_text", "url": "https://a"}),
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "rotation_risk",
+             "quote": quote, "source_url": "https://a"},
+        ]}),
+    ]
+    client = FakeAnthropicClient(responses)
+
+    frame = predict_club_agent(
+        conn, SEASON, PRIOR_SEASON, 2, "Leeds",
+        llm_client=client, fetch_page_text=lambda url: quote, fetch=fetch,
+    )
+    conn.close()
+
+    row = frame[frame["code"] == 1001].iloc[0]
+    assert row["method"] == "agent_rotation_risk"  # applied normally
 
 
 def test_predict_club_agent_empty_roster_for_unknown_club(tmp_path):

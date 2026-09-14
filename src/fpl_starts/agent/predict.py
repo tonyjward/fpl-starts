@@ -74,6 +74,13 @@ describes a match that has already been played (e.g. reporting a player \
 was substituted or sent off in a *previous* game -- that is not evidence \
 about the *next* one, even if it looks like it at a glance).
 
+Your category must match what your own quote actually says. Use \
+confirmed_out or confirmed_starting only when the evidence is unhedged --  \
+words like "doubtful", "assessed", "50-50", or "a fitness test" describe \
+uncertainty, not a confirmation, even if the same sentence also lists a \
+player who genuinely is confirmed out. Use rotation_risk or \
+returning_from_injury for anything short of that.
+
 Respond with exactly one JSON object per turn, and nothing else -- no \
 markdown fences, no prose outside the JSON. Valid actions:
 
@@ -115,6 +122,37 @@ def _normalize_for_substring_check(text):
     for curly, straight in _QUOTE_CHAR_MAP.items():
         text = text.replace(curly, straight)
     return " ".join(text.lower().split())
+
+
+# Deliberately lexical/deterministic, not another LLM call -- same "verify
+# in code" discipline as quote verification itself. Flags a classification
+# as suspect only for the two categories where a false confirmation is most
+# costly (confirmed_out hard-gates to 0; confirmed_starting carries the
+# highest prior) -- hedging language in a rotation_risk/returning_from_injury
+# quote is exactly what that category is for, not a red flag.
+HEDGE_PHRASES = (
+    "doubtful", "questionable", "assessed", "50-50", "50/50",
+    "game-time decision", "monitored", "touch and go", "fitness test",
+    "waiting on", "could return", "may be", "might be", "not yet confirmed",
+)
+
+
+def _hedge_phrases_in(quote):
+    normalized = _normalize_for_substring_check(quote)
+    return any(phrase in normalized for phrase in HEDGE_PHRASES)
+
+
+def _inconsistent_classifications(classifications):
+    """Classifications whose category (confirmed_out/confirmed_starting)
+    contradicts hedging language in their own quote -- see HEDGE_PHRASES.
+    Used both to trigger a self-correction turn in run_agent_loop and, as a
+    final safety net, in verify_classifications.
+    """
+    return [
+        item for item in classifications
+        if item.get("category") in ("confirmed_out", "confirmed_starting")
+        and _hedge_phrases_in(item.get("quote") or "")
+    ]
 
 
 def get_opponent(conn, season, target_round, team_name):
@@ -180,7 +218,8 @@ def load_club_roster(conn, season, prior_season, target_round, team_name, fetch=
 
 
 def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=None,
-                    search_web=None, fetch_page_text=None, max_turns=12):
+                    search_web=None, fetch_page_text=None, max_turns=12,
+                    max_reclassifications=1):
     """The manual ReAct loop -- see module docstring for why it's manual.
 
     `opponent_name` (from get_opponent) tells the model which fixture it's
@@ -189,6 +228,16 @@ def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=N
     known for this round (the model is told evidence can't be fixture-
     checked, which the caller should treat as a reason to be more, not
     less, skeptical of what comes back).
+
+    A `final_answer` isn't accepted immediately: any confirmed_out/
+    confirmed_starting classification whose own quote contains hedging
+    language (see HEDGE_PHRASES) gets one corrective turn -- named
+    specifically, so the model can fix its own mistake rather than the
+    evidence it already gathered being thrown away -- capped at
+    `max_reclassifications` rounds so this is a correction opportunity, not
+    an invitation to loop indefinitely second-guessing itself. Whatever
+    comes back after that (fixed or not) is returned as-is;
+    verify_classifications is the final safety net if it's still wrong.
 
     Returns (classifications, fetched_pages): `classifications` is the raw
     list of dicts the model returned via final_answer (unverified --
@@ -218,6 +267,7 @@ def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=N
     initial = "Club: {0}\n{1}Roster:\n{2}".format(team_name, fixture_line, roster_desc)
     messages = [{"role": "user", "content": initial}]
     fetched_pages = {}
+    reclassifications_used = 0
 
     for _ in range(max_turns):
         response = llm_client.messages.create(
@@ -238,7 +288,25 @@ def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=N
 
         kind = action.get("action")
         if kind == "final_answer":
-            return action.get("classifications") or [], fetched_pages
+            classifications = action.get("classifications") or []
+            inconsistent = _inconsistent_classifications(classifications)
+            if inconsistent and reclassifications_used < max_reclassifications:
+                reclassifications_used += 1
+                issues = "; ".join(
+                    "code={0} category={1} quote={2!r} reads as hedged, not "
+                    "confirmed".format(item.get("code"), item.get("category"), item.get("quote"))
+                    for item in inconsistent
+                )
+                messages.append({
+                    "role": "user",
+                    "content": "Some of your classifications don't match their own "
+                               "quotes: {0}. Re-read them and resubmit a corrected "
+                               "final_answer -- use rotation_risk or "
+                               "returning_from_injury where the evidence is hedged, "
+                               "not confirmed_out/confirmed_starting.".format(issues),
+                })
+                continue
+            return classifications, fetched_pages
 
         if kind == "search_web":
             try:
@@ -316,7 +384,12 @@ def verify_classifications(raw_classifications, fetched_pages, valid_codes, oppo
         if _normalize_for_substring_check(quote) not in _normalize_for_substring_check(page_text):
             continue
         verified.append(item)
-    return verified
+    # Final safety net: run_agent_loop already gives the model one chance to
+    # fix a confirmed_out/confirmed_starting classification whose own quote
+    # is hedged (see HEDGE_PHRASES), but if it didn't take that chance (or
+    # ignored the correction), don't trust it here either.
+    inconsistent_codes = {item["code"] for item in _inconsistent_classifications(verified)}
+    return [item for item in verified if item["code"] not in inconsistent_codes]
 
 
 def predict_club_agent(conn, season, prior_season, target_round, team_name,

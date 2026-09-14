@@ -94,7 +94,15 @@ class FakeMessagesResource(object):
         self.calls = []
 
     def create(self, **kwargs):
-        self.calls.append(kwargs)
+        # Snapshot messages at call time -- predict.py mutates the same
+        # list object turn to turn, so storing a live reference here would
+        # make an earlier call's recorded messages silently grow to include
+        # messages appended after it, in real HTTP behavior it's serialized
+        # at call time.
+        snapshot = dict(kwargs)
+        if "messages" in snapshot:
+            snapshot["messages"] = list(snapshot["messages"])
+        self.calls.append(snapshot)
         return FakeMessage(self._responses.pop(0))
 
 
@@ -247,6 +255,76 @@ def test_run_agent_loop_flags_unknown_fixture_when_opponent_not_given():
     assert "unknown" in first_call_messages[0]["content"]
 
 
+def test_run_agent_loop_gives_the_model_a_corrective_turn_for_a_hedged_confirmed_out():
+    bad_quote = "Doubtful: Amar Dedic (hamstring), Ewen Jaouen (ankle)"
+    good_quote = "Doubtful: Amar Dedic (hamstring), Ewen Jaouen (ankle)"
+    responses = [
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "confirmed_out",
+             "quote": bad_quote, "source_url": "https://a"},
+        ]}),
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "rotation_risk",
+             "quote": good_quote, "source_url": "https://a"},
+        ]}),
+    ]
+    client = FakeAnthropicClient(responses)
+
+    classifications, _pages = run_agent_loop(
+        client, "fake-model", "Newcastle", fake_roster(), ToolBudget(),
+    )
+
+    assert len(client.messages.calls) == 2  # the corrective turn actually happened
+    assert classifications == [
+        {"code": 1001, "category": "rotation_risk",
+         "quote": good_quote, "source_url": "https://a"},
+    ]
+    # the corrective message named the specific problem
+    second_call_messages = client.messages.calls[1]["messages"]
+    corrective = second_call_messages[-1]["content"]
+    assert "1001" in corrective and "hedged" in corrective
+
+
+def test_run_agent_loop_returns_still_flagged_answer_after_reclassification_budget_used():
+    bad_quote = "Doubtful: Ewen Jaouen (ankle)"
+    responses = [
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "confirmed_out", "quote": bad_quote,
+             "source_url": "https://a"},
+        ]}),
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "confirmed_out", "quote": bad_quote,
+             "source_url": "https://a"},
+        ]}),
+    ]
+    client = FakeAnthropicClient(responses)
+
+    classifications, _pages = run_agent_loop(
+        client, "fake-model", "Newcastle", fake_roster(), ToolBudget(),
+        max_reclassifications=1,
+    )
+
+    # one corrective turn used, model didn't fix it, loop doesn't keep going
+    assert len(client.messages.calls) == 2
+    assert classifications[0]["category"] == "confirmed_out"  # unfixed, returned as-is
+
+
+def test_run_agent_loop_accepts_non_hedged_confirmed_out_without_a_corrective_turn():
+    responses = [
+        json.dumps({"action": "final_answer", "classifications": [
+            {"code": 1001, "category": "confirmed_out",
+             "quote": "Out: Joe Rodon (thigh)", "source_url": "https://a"},
+        ]}),
+    ]
+    client = FakeAnthropicClient(responses)
+
+    classifications, _pages = run_agent_loop(
+        client, "fake-model", "Leeds", fake_roster(), ToolBudget(),
+    )
+    assert len(client.messages.calls) == 1  # no corrective turn needed
+    assert classifications[0]["category"] == "confirmed_out"
+
+
 def test_run_agent_loop_gives_up_after_max_turns_without_final_answer():
     responses = [json.dumps({"action": "search_web", "query": "q"})] * 3
     client = FakeAnthropicClient(responses)
@@ -384,6 +462,34 @@ def test_verify_classifications_matches_curly_quotes_against_straight():
     result = verify_classifications(
         [{"code": 1001, "category": "confirmed_starting",
           "quote": "'will start' on Saturday", "source_url": "https"}],
+        fetched, valid_codes={1001},
+    )
+    assert len(result) == 1
+
+
+def test_verify_classifications_discards_hedged_confirmed_out_as_final_safety_net():
+    """A classification that slipped past run_agent_loop's own correction
+    turn unflagged (e.g. verify_classifications called directly, as
+    predict_club_agent does) should still not be trusted at face value.
+    """
+    fetched = {"https": "Doubtful: Ewen Jaouen (ankle)."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "confirmed_out",
+          "quote": "Doubtful: Ewen Jaouen (ankle)", "source_url": "https"}],
+        fetched, valid_codes={1001},
+    )
+    assert result == []
+
+
+def test_verify_classifications_keeps_hedged_rotation_risk():
+    """Hedging language is exactly what rotation_risk/returning_from_injury
+    are for -- only confirmed_out/confirmed_starting are held to this
+    standard.
+    """
+    fetched = {"https": "Doubtful: Ewen Jaouen (ankle)."}
+    result = verify_classifications(
+        [{"code": 1001, "category": "rotation_risk",
+          "quote": "Doubtful: Ewen Jaouen (ankle)", "source_url": "https"}],
         fetched, valid_codes={1001},
     )
     assert len(result) == 1

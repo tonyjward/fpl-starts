@@ -19,6 +19,7 @@ fpl-starts-derive = "fpl_starts.derived:_main"
 fpl-starts-predict = "fpl_starts.starts_model:_main"
 fpl-starts-score = "fpl_starts.scoring:_main"
 fpl-starts-agent-predict = "fpl_starts.agent.predict:_main"
+fpl-starts-agent-report = "fpl_starts.agent.domain_stats:_main"
 
 [build-system]
 requires = ["setuptools>=61"]

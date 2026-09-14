@@ -1,9 +1,27 @@
 # fpl-starts
 
-P(starts): predicts whether a Fantasy Premier League player will start the
-next gameweek, from a validated, walk-forward-backtested lookup table --
-plus the raw archiver, derived SQLite layer, and calibration harness it
-depends on.
+Fantasy Premier League is played by more than 11 million people, and every
+one of them makes the same weekly bet: which 11 of your 15 players will
+actually take the pitch. Pick wrong and the cost isn't small. A player who
+doesn't start scores zero from that slot regardless of how good a pick they
+looked on paper -- no clean sheet, no goal, no bonus, nothing recoverable
+unless a legal auto-substitution happens to bail you out. Captain someone
+who doesn't start and the armband's double points are gone too. A transfer
+spent on a player who then gets rotated to the bench is a wasted transfer,
+not a neutral one -- the alternative used was a real, scarce resource.
+
+The tool managers are given for this decision is a single number on the
+player's card: a 25/50/75/100 "chance of playing" flag. It answers
+*fitness*, not *selection* -- it cannot tell a nailed-on regular apart from
+a fourth-choice option, because it was never designed to. The gap between
+"not injured" and "will start" is exactly where squads get quietly wrecked.
+
+**The objective here is to automate a reliable, calibrated estimate of
+P(starts)** -- built from what a player has actually done recently, scored
+against real outcomes rather than assumed. Not the flag taken at face value;
+the *observed* frequency of starting, measured, backtested, and reported
+honestly on the group of players where it's genuinely hard, not just where
+it's easy. This package is the base model:
 
 ## What's here
 

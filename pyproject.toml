@@ -6,8 +6,11 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.7"
 dependencies = [
+    "anthropic>=0.26.0",
+    "beautifulsoup4>=4.12.0",
     "pandas>=1.1.5",
     "requests>=2.31.0",
+    "tokenizers<0.20",
 ]
 
 [project.scripts]
@@ -15,6 +18,7 @@ fpl-starts-archive = "fpl_starts.archiver:_main"
 fpl-starts-derive = "fpl_starts.derived:_main"
 fpl-starts-predict = "fpl_starts.starts_model:_main"
 fpl-starts-score = "fpl_starts.scoring:_main"
+fpl-starts-agent-predict = "fpl_starts.agent.predict:_main"
 
 [build-system]
 requires = ["setuptools>=61"]

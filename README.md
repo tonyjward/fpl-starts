@@ -17,10 +17,15 @@ not tell us if the manager will drop the player due to poor performance,
 or to rotate the squad.
 
 The aim of this project is to produce P(start) for all Premier League
-players. We will be testing 3 model variants
-1) Only a players recent history
-2) Layer on FPL's own injury status flag on top of 1.
-3) Layer on a team news adjustement to 2. We will use an Agent for this
+players. This repo tests 3 model variants:
+1) Only a player's recent history (`raw_lookup`).
+2) Layer on FPL's own injury status flag on top of 1 (`refined_availability`).
+3) Layer on a team news adjustment to 2, gathered by an AI agent
+   (`refined_availability_agent_news`).
+
+See `docs/p_starts_model_architecture.md` for how the three fit together,
+including a worked example for each and how the agent's claim priors work
+and change over time.
 
 ## What's here
 
@@ -40,6 +45,19 @@ players. We will be testing 3 model variants
   on top as a gate (hard-zero for injured/suspended, an observed-frequency
   flag table for doubtful players) -- deliberately never
   `P(available) * P(selected)`.
+- **`agent/`** -- the AI-agent challenger. `predict.py`: a manual ReAct loop
+  (no framework -- this project's Python 3.7 target can't install an SDK
+  version with native tool-calling) that gives an LLM its own web-search and
+  page-reading tools, one club roster at a time, and asks it to classify
+  each player into a fixed taxonomy (`categories.py`) -- never a
+  probability directly. `domain_stats.py`: per-source-domain accuracy
+  monitoring for the evidence the agent gathers (monitoring only for now --
+  doesn't yet feed back into the blend).
+- **`quarantine.py`** -- moves any archived prediction snapshot whose
+  `predicted_at` postdates its round's deadline out of the season
+  directory, so a same-day dev/test rerun can never silently get treated as
+  the real pre-deadline prediction (`derived.py` otherwise trusts whichever
+  snapshot is *latest*).
 - **`scoring.py`** -- the calibration harness: Brier score and accuracy,
   stratified by how often a player actually starts (Core/Rotation/
   Marginal/Deep), against three baselines (persistence, season-rate,
@@ -63,22 +81,31 @@ is the number that actually matters.
 
 ## What's deliberately not here
 
-This package is the base model only -- two baselines (`raw_lookup` and
-`refined_availability`) plus the archiver/derived layer/calibration harness
-that support them, kept deliberately minimal. An AI-agent-based challenger
-to these baselines (explicit tool calls, including its own
-evidence-gathering, evaluated through the same `scoring.py` harness) is the
-planned next addition to this repo.
+The news-scraping/LLM-extraction evidence layer that predates the agent
+(scraped articles classified into the same taxonomy, plus source-tier
+weighting and claim-level scoring) lives in a separate, private repo that
+consumes this package as an editable dependency -- kept out of this repo
+to keep the base model + agent challenger minimal and independently
+useful. `docs/p_starts_model_architecture.md`'s "Where things live" table
+covers only this repo's own three arms.
+
+Also not yet here: the agent's per-domain accuracy (`domain_stats.py`)
+doesn't feed back into `predict.py`'s blend -- a source found unreliable
+is visible in a report, but doesn't yet lose influence. That's a real,
+identified next step, not an oversight.
 
 ## Running the pipeline
 
 ```
 uv sync
-uv run fpl-starts-archive          # archive today's FPL data
-uv run fpl-starts-derive           # rebuild the derived SQLite layer
-uv run fpl-starts-predict          # predict the next unplayed gameweek
-uv run fpl-starts-derive           # rebuild again, to pick up predictions
-uv run fpl-starts-score --target-round N   # once gameweek N is played
+uv run fpl-starts-archive                       # archive today's FPL data
+uv run fpl-starts-derive                        # rebuild the derived SQLite layer
+uv run fpl-starts-predict                       # predict the next unplayed gameweek
+uv run fpl-starts-agent-predict --team "Arsenal" # agent challenger, one club roster at a time
+uv run fpl-starts-derive                        # rebuild again, to pick up predictions
+uv run fpl-starts-score --target-round N        # once gameweek N is played
+uv run fpl-starts-agent-report                  # per-domain accuracy for the agent's evidence
+uv run python -m fpl_starts.quarantine --season 2026-27  # move out any post-deadline snapshot
 ```
 
 Each command takes `--help` for its full options (`--base-dir`, `--db-path`,

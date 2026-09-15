@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 
 import data
-from agent import PRIOR_SEASON, SEASON, build_agent
+from agent import PRIOR_SEASON, SEASON, build_agent, extract_text
 
 st.set_page_config(page_title="P(starts) dashboard", layout="wide")
 st.title("P(starts) dashboard")
@@ -90,6 +90,6 @@ with tab_chat:
                 result = st.session_state.agent.invoke(
                     {"messages": [{"role": "user", "content": question}]}
                 )
-                answer = result["messages"][-1].content
+                answer = extract_text(result["messages"][-1].content)
             st.markdown(answer)
         st.session_state.chat_history.append({"role": "assistant", "content": answer})

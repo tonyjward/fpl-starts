@@ -88,8 +88,30 @@ def get_team_squad_predictions(team_id: int, event: int) -> str:
     return squad.round(4).to_string(index=False)
 
 
+def extract_text(content):
+    """The plain-text answer from one message's `.content` -- Opus 5 thinks
+    by default, so `content` is a list of blocks (thinking + text), not a
+    bare string; printing/rendering the list directly (confirmed live)
+    dumps the thinking block's raw signature next to the real answer.
+    Some LangChain integrations do flatten to a plain string, so handle
+    both rather than assume the list shape.
+    """
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block.get("text", "") for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
 def build_agent():
-    llm = ChatAnthropic(model=MODEL, max_tokens=8000)
+    # Same anthropic-workspace-id handling as ../src/fpl_starts/agent/predict.py:
+    # an API key that isn't scoped to a single workspace needs this header on
+    # every request (confirmed live -- omitting it 400s), a key that *is*
+    # scoped doesn't need or accept it being wrong, so only send it when set.
+    workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+    default_headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
+    llm = ChatAnthropic(model=MODEL, max_tokens=8000, default_headers=default_headers)
     return create_react_agent(llm, [get_gameweek_report, get_team_squad_predictions],
                                prompt=SYSTEM_PROMPT)
 
@@ -106,7 +128,7 @@ def _main():
     question = " ".join(sys.argv[1:]) or "Explain gameweek 3's results."
     agent = build_agent()
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
-    print(result["messages"][-1].content)
+    print(extract_text(result["messages"][-1].content))
 
 
 if __name__ == "__main__":

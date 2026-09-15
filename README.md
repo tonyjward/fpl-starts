@@ -46,8 +46,10 @@ and change over time.
   flag table for doubtful players) -- deliberately never
   `P(available) * P(selected)`.
 - **`agent/`** -- the AI-agent challenger. `predict.py`: a manual ReAct loop
-  (no framework -- this project's Python 3.7 target can't install an SDK
-  version with native tool-calling) that gives an LLM its own web-search and
+  (predates this project's 2026-09-15 Python floor bump, which lifted the
+  SDK-version ceiling that originally forced this -- kept as-is since
+  migrating to native tool-calling wasn't itself the goal of that change,
+  see the module docstring) that gives an LLM its own web-search and
   page-reading tools, one club roster at a time, and asks it to classify
   each player into a fixed taxonomy (`categories.py`) -- never a
   probability directly. `domain_stats.py`: per-source-domain accuracy
@@ -117,3 +119,12 @@ paths from wherever you run them.
 ```
 uv run pytest
 ```
+
+## Dashboard
+
+`dashboard/` -- a Streamlit dashboard + LangGraph agent, read-only against
+this repo's and the private news repo's `derived.db` and the public FPL
+API: gameweek performance across every arm, one manager's squad (by FPL
+team ID) against P(starts) predictions, and a chat interface that explains
+either. Its own nested Python project (separate `pyproject.toml`/venv,
+not a Python-version workaround -- see `dashboard/README.md`).

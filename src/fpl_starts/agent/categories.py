@@ -8,8 +8,6 @@ verbatim quote. The probability that category maps to is decided here, by
 code, from observed outcomes -- never by the model. See predict.py's module
 docstring for why: an LLM emitting a probability directly was tested against
 this approach twice in the private repo and lost both times.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import pandas as pd

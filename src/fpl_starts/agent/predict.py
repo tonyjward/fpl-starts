@@ -3,16 +3,21 @@ fixed news taxonomy, using its own tool calls to gather evidence, then hands
 the classification (never a probability -- see categories.py) to a
 deterministic lookup for the final p_start.
 
-**Explicit tool calls in code, not a framework.** The Anthropic SDK version
-this project's Python 3.7 target can install (anthropic==0.26.0, pinned by
-the same tokenizers<0.20 constraint the private repo already needed) predates
-native `tools=`/tool_use support in this SDK. Rather than pull in a newer
-SDK a consuming environment can't run, the loop below is a plain ReAct-style
-loop this code owns end to end: the model is asked to respond with one JSON
-action per turn (search_web / fetch_page_text / final_answer), this module
-parses that JSON, executes the requested tool itself, and feeds the result
-back as the next turn -- no framework mediates any of this, arguably more
-explicit than the SDK's own tool-calling sugar would have been.
+**Explicit tool calls in code, not a framework.** Written when this
+project's Python 3.7 floor capped the installed `anthropic` SDK at
+0.26.0, which predated native `tools=`/tool_use support entirely (dropped
+2026-09-15 along with the 3.7 floor -- the SDK now installed supports it
+natively). Kept as a plain ReAct-style loop this code owns end to end
+anyway, not migrated as part of that change: the model is asked to
+respond with one JSON action per turn (search_web / fetch_page_text /
+final_answer), this module parses that JSON, executes the requested tool
+itself, and feeds the result back as the next turn -- no framework
+mediates any of this, arguably more explicit than the SDK's own
+tool-calling sugar would be. Revisit if native tool_use turns out to earn
+its keep over this (less hand-rolled JSON parsing, built-in retry/
+validation) -- not assumed, since this loop's own quirks (verify_
+classifications' verbatim-quote check, the hedge-phrase reclassification
+turn) aren't things native tool_use hands you for free either.
 
 **Classify, don't estimate.** The private repo tested an arm where the LLM
 emitted a probability directly against an arm where it classified into a
@@ -22,8 +27,6 @@ category-based arm won both times, because an LLM-invented float is an
 ungrounded, unauditable number. This agent's model output is *only ever* a
 category plus a verbatim quote; categories.py, not the model, decides what
 that category is worth.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import json

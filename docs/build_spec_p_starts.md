@@ -4,8 +4,12 @@ Design spec for this package: the P(starts) lookup-table model
 (`predict_gameweek`/`predict_gameweek_refined`), the raw archiver, the
 derived SQLite layer, and the calibration harness.
 
-Target: Python 3.7. No walrus operator, no `X | Y` type unions, no f-string
-`=` specifier.
+Target: Python 3.12+ (bumped from 3.7 on 2026-09-15, alongside `fpl`, to
+support the dashboard's LangGraph agent -- see docs/gameweek-summary.md
+in the private repo). The 3.7-era style rules (no walrus operator, no
+`X | Y` type unions, no f-string `=` specifier) no longer apply; existing
+code wasn't rewritten to use the newly-available syntax as part of that
+change, so don't read their absence as still-required.
 
 ---
 

@@ -21,8 +21,6 @@ once the gameweek's data_checked. This module only reads derived.db and the
 community archive (for the persistence/season-rate baselines, which need
 the same cross-season history starts_model.py uses to predict) -- it never
 writes anything.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import os

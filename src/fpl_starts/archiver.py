@@ -9,8 +9,6 @@ Two invariants everything downstream depends on:
   - the raw layer is never parsed, edited, or overwritten -- only appended to.
   - the manifest is the index of the archive: every "ok" line must point at
     a real file with a matching hash, and every raw file must have a line.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import gzip

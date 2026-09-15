@@ -5,8 +5,6 @@ disposable and rebuilt freely, never written to directly or updated
 incrementally. If a parsing bug is found here, delete the database and
 rebuild -- the raw archive is unaffected and is the only thing that must
 never be touched.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import csv

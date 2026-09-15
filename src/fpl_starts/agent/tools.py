@@ -4,8 +4,6 @@ Both are plain functions the agent's loop (predict.py) calls directly --
 there is no framework mediating this, per the module docstring in
 predict.py. Both are budget-capped by `ToolBudget` so a bad run degrades to
 "fewer players classified", never an unbounded loop or runaway API cost.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import os

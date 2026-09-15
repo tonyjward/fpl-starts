@@ -18,8 +18,6 @@ sees, so the real pre-deadline snapshot (if one was archived) becomes
 wanted for a deliberate one-off retrospective look (see
 docs/gameweek-summary.md's Leeds v Newcastle case), is still right there
 under a normal path -- nothing about a house move is a diagnosis.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import json

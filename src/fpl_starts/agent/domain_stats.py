@@ -12,8 +12,6 @@ near enough claims per tier to weight on, see their future_refinements.md).
 Per-domain will need even more volume than per-tier before there's a real
 signal to act on; this module is what makes that signal visible once it
 exists, not an assumption that it exists yet.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import json

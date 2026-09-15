@@ -55,8 +55,6 @@ so the two can be scored side by side via scoring.py's compare_models.
 These two arms are the base model: no scraped evidence, no LLM calls,
 nothing beyond FPL's own bootstrap-static/event-live data -- see this
 package's README for what's deliberately not here.
-
-Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 """
 
 import io

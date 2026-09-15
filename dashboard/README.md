@@ -13,9 +13,19 @@ no business sharing a dependency set with the modelling pipeline it reads.
 
 ```
 uv sync
-export ANTHROPIC_API_KEY=...   # or `ant auth login` -- needed for the chat tab only
 uv run streamlit run app.py
 ```
+
+The chat tab needs `ANTHROPIC_API_KEY` (and, only if your key isn't
+scoped to a single workspace, `ANTHROPIC_WORKSPACE_ID` -- confirmed live:
+an unscoped key 400s on every request without it). `agent.py` loads both
+via `python-dotenv` automatically, checking in order: `.env` in this
+directory, `.env` in the `fpl-starts` root, then `../fpl/.env` (the
+private news repo's, purely for convenience if you have it checked out
+alongside this one) -- first one that sets a variable wins, and none of
+this is required if the variables are already in your shell environment
+(`ant auth login` also works, with no env var at all). None of these
+`.env` files are tracked in git.
 
 Run from this directory -- `data.py`'s default DB paths (`../derived.db`
 for this repo's own, `../../fpl/derived.db` for the private news repo's)
@@ -48,8 +58,8 @@ agent proves useful and an operator-console tier is actually wanted.
 
 ## Tests
 
-None yet beyond the manual smoke checks this was built with (`data.py`'s
-functions run against real archived predictions; `agent.py`'s graph
-constructs cleanly; the Streamlit app starts and serves). No live LLM call
-has been verified end-to-end in this environment -- no `ANTHROPIC_API_KEY`
-was available when this was built.
+No formal pytest suite yet, but this has been live-tested end to end, not
+just smoke-checked: real tool calls against real archived predictions and
+a real FPL team's squad, through a real `claude-opus-5` call, producing
+grounded answers that matched independently-verified numbers (see
+`dashboard/agent.py`'s and `app.py`'s commit history for specifics).

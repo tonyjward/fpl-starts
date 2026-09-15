@@ -1,9 +1,8 @@
 """LangGraph agent: explains a gameweek's P(starts) numbers, or one
 manager's squad against them, in conversation -- never estimates or
 invents a probability itself (same discipline as the agent challenger in
-../../fpl-starts/src/fpl_starts/agent/predict.py: every number it talks
-about comes from a tool call reading real derived.db/API data, not from
-the model).
+../src/fpl_starts/agent/predict.py: every number it talks about comes
+from a tool call reading real derived.db/API data, not from the model).
 
 Read-only by construction: every tool below wraps a data.py function, and
 data.py never writes to either derived.db or calls anything but public,
@@ -13,11 +12,24 @@ archive write is reachable from this agent.
 
 import os
 
+from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 import data
+
+# Loaded in priority order (first one that sets a given var wins --
+# load_dotenv never overrides an already-set os.environ value, including
+# one set by an earlier call here): this project's own .env first (so a
+# standalone fpl-starts checkout has an obvious place to put a key), then
+# the private news repo's, purely for this user's own convenience since
+# that's where the key already lives -- never required, dashboard/README.md
+# covers running without it. Neither path existing is not an error.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(_HERE, ".env"))
+load_dotenv(os.path.join(_HERE, "..", ".env"))
+load_dotenv(os.path.join(_HERE, "..", "..", "fpl", ".env"))
 
 SEASON = "2026-27"
 PRIOR_SEASON = "2025-26"

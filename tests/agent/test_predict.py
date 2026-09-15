@@ -710,6 +710,33 @@ def test_blend_verified_returns_none_when_nothing_priceable():
     assert result is None
 
 
+def test_blend_verified_available_only_is_no_op_not_priced():
+    """'available' is deliberately never priced (NO_OP_CATEGORIES) --
+    unlike a genuinely unknown category, this is a real, expected
+    taxonomy member, so it gets its own distinct sentinel (p_start=None,
+    a real method) rather than being indistinguishable from "nothing
+    priceable at all".
+    """
+    result = _blend_verified(
+        [{"category": "available", "quote": "q1"}], category_rates={},
+    )
+    assert result == (None, "agent_available_no_override", False)
+
+
+def test_blend_verified_available_does_not_dilute_a_real_category():
+    """A player with both an 'available' claim and a genuine priced claim
+    should be routed purely on the priced claim -- 'available' must not
+    even flip the method to 'agent_blended' when only one category
+    actually priced anything.
+    """
+    result = _blend_verified(
+        [{"category": "available", "quote": "q1"},
+         {"category": "rotation_risk", "quote": "q2"}],
+        category_rates={},
+    )
+    assert result == (CATEGORY_PRIORS["rotation_risk"], "agent_rotation_risk", False)
+
+
 # --------------------------------------------------------------------------
 # predict_club_agent (end to end, all fakes)
 # --------------------------------------------------------------------------

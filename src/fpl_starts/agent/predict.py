@@ -28,6 +28,7 @@ Python 3.7 target: no walrus operator, no `X | Y` unions, no f-string `=`.
 
 import json
 import os
+import warnings
 
 import pandas as pd
 
@@ -86,7 +87,18 @@ _AVAILABILITY_DECIDED_METHODS = frozenset(
 
 TAXONOMY_DESCRIPTIONS = (
     "confirmed_starting -- a manager, press conference, or predicted lineup "
-    "names this player in the starting XI for the upcoming fixture.\n"
+    "names this player in the starting XI for the upcoming fixture -- a "
+    "specific role, position, or lineup slot, not just that the player is "
+    "fit or eligible.\n"
+    "available -- the player is fit, eligible, or has recovered enough to "
+    "be considered ('will be available', 'has returned', 'in contention', "
+    "'100% available', 'ready to feature'), but nothing states a specific "
+    "starting role or an explicit 'will start'. Use this rather than "
+    "confirmed_starting for fitness-only language with no lineup "
+    "specifics -- FPL's own status flag already covers plain fitness, so "
+    "this category exists purely so that genuine but non-specific good "
+    "news has somewhere correct to go instead of being read as a lineup "
+    "confirmation.\n"
     "confirmed_out -- the player is ruled out (injury, suspension, "
     "explicitly dropped) for the upcoming fixture.\n"
     "rotation_risk -- credible reporting that the player may be rested or "
@@ -522,12 +534,27 @@ def _blend_verified(items, category_rates):
         return 0.0, "agent_confirmed_out", True
 
     priced = []
+    saw_no_op = False
     for item in deduped:
-        p = categories.category_to_p_start(item["category"], category_rates)
+        category = item["category"]
+        if category in categories.NO_OP_CATEGORIES:
+            # Deliberately never priced -- see NO_OP_CATEGORIES. Tracked so
+            # a player whose classifications are *only* no-op categories
+            # still gets a distinct method below, rather than being
+            # indistinguishable from "the agent found nothing at all".
+            saw_no_op = True
+            continue
+        p = categories.category_to_p_start(category, category_rates)
         if p is not None:
-            priced.append((item["category"], p))
+            priced.append((category, p))
+        elif category not in categories.CATEGORY_PRIORS:
+            warnings.warn(
+                "unrecognized category {0!r} -- TAXONOMY_DESCRIPTIONS, "
+                "CATEGORY_PRIORS, and NO_OP_CATEGORIES may have drifted "
+                "apart".format(category)
+            )
     if not priced:
-        return None
+        return (None, "agent_available_no_override", False) if saw_no_op else None
 
     p_start = sum(p for _, p in priced) / len(priced)
     priced_categories = {category for category, _ in priced}
@@ -607,6 +634,15 @@ def predict_club_agent(conn, season, prior_season, target_round, team_name,
             # dedicated method label still record what the agent found,
             # so it's clear it deferred rather than found nothing at all.
             by_code.loc[code, "method"] = "agent_deferred_to_availability"
+            by_code.loc[code, "evidence"] = evidence_json
+            continue
+
+        if p_start is None:
+            # Every classification for this player was a no-op category
+            # (e.g. 'available') -- p_start stays at whatever the roster
+            # anchor already had, but the claim is still recorded as seen
+            # rather than silently identical to no evidence at all.
+            by_code.loc[code, "method"] = method
             by_code.loc[code, "evidence"] = evidence_json
             continue
 

@@ -27,6 +27,23 @@ CATEGORY_PRIORS = {
     "returning_from_injury": 0.35,
 }
 
+# Categories the taxonomy can emit that deliberately never move p_start --
+# "available" is the only member: it asserts fitness/no-injury, which
+# predict_gameweek_refined's own availability routing already derives from
+# FPL's own status flag, built on an actual medical/club assessment updated
+# continuously, not one piece of scraped evidence. A hand-set prior here
+# would be strictly worse than leaving the anchor's own p_start alone: a
+# Core player who starts 84% of the time and gets an "available"
+# classification should stay near 0.84, not get pulled toward some global
+# constant that has no way to know that. Mirrors the private repo's own
+# NO_OP_CATEGORIES (added 2026-09-15) after "available"-only evidence
+# ("will be available", no lineup role stated) was found there routing
+# into confirmed_starting at a high probability -- see the private repo's
+# docs/gameweek-summary.md ("Post-GW4 retrospective" entry) for the
+# retrospective validation behind adding this rather than a sixth hand-set
+# prior.
+NO_OP_CATEGORIES = frozenset(["available"])
+
 # How many same-category, this-arm's-own-history observations it takes for
 # real data to roughly match the prior's weight. A guess, like the priors
 # themselves -- see shrink's docstring.

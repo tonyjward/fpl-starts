@@ -7,6 +7,7 @@ import sqlite3
 
 from fpl_starts.agent.categories import (
     CATEGORY_PRIORS,
+    NO_OP_CATEGORIES,
     category_to_p_start,
     fit_category_rates,
     shrink,
@@ -60,6 +61,17 @@ def test_category_to_p_start_unknown_category_returns_none():
 def test_category_to_p_start_uses_prior_when_no_observed_rate_yet():
     p = category_to_p_start("rotation_risk", {})
     assert p == CATEGORY_PRIORS["rotation_risk"]
+
+
+def test_available_is_a_no_op_category_not_a_priced_one():
+    """'available' asserts fitness only, already covered by FPL's own
+    status flag with a stronger basis than scraped evidence -- it must
+    never be in CATEGORY_PRIORS (predict.py's _blend_verified relies on
+    that to leave p_start untouched, see NO_OP_CATEGORIES's docstring).
+    """
+    assert "available" in NO_OP_CATEGORIES
+    assert "available" not in CATEGORY_PRIORS
+    assert category_to_p_start("available", {}) is None
 
 
 def test_fit_category_rates_empty_with_no_prior_rounds(tmp_path):

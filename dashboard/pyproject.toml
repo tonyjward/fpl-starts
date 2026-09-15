@@ -1,0 +1,20 @@
+[project]
+name = "fpl-dashboard"
+version = "0.1.0"
+description = "Streamlit dashboard + LangGraph agent for P(starts) performance and squad explanation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "streamlit>=1.38",
+    "langgraph>=0.2",
+    "langchain-anthropic>=0.3",
+    "pandas>=2.0",
+    "requests>=2.31",
+    "fpl-starts",
+]
+
+[tool.uv.sources]
+fpl-starts = { path = "..", editable = true }
+
+[dependency-groups]
+dev = ["pytest>=7.4.4"]

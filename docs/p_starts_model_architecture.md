@@ -138,6 +138,34 @@ re-verified against the actual fetched page text before it's trusted
 is the only thing allowed to hard-gate a player regardless of what FPL's
 own status flag already decided.
 
+**Worked example**, real evidence from an actual agent run (GW4, Newcastle
+vs. Leeds — one of the club-roster pilots this arm has been tested
+against; excluded from scoring by `quarantine.py` as post-deadline, see
+below, but the evidence-gathering itself is real). Given Newcastle's
+roster and told the upcoming fixture was against Leeds, the agent's web
+search surfaced:
+
+> *"Dedic was substituted at the interval of the team's 1-0 win over
+> Millwall in the EFL Cup with a hamstring issue, and the defender is a
+> major doubt for this contest."*
+> — sportsmole.co.uk
+
+Classified `category = "rotation_risk"` (a genuine doubt, short of an
+outright confirmed absence — not `confirmed_out`, since nothing here
+rules him out entirely). `verify_classifications` re-checked that exact
+quote against the page the agent actually fetched before trusting it.
+Dedić's own baseline going into this was `refined_availability = 0.843`
+(`method = "cal_rolling_xseason"` — not one of FPL's own status-decided
+methods, so the agent's classification is free to override it, not just
+defer to it).
+
+`_blend_verified` prices a single `rotation_risk` classification via
+`category_to_p_start`, which today would return the hand-set prior
+exactly — **0.50** — since `fit_category_rates` has no legitimate
+same-category history to shrink toward yet (see the priors section
+below). Final: `p_start = 0.50`, `method = "agent_rotation_risk"`, down
+from the baseline's 0.843. 
+
 ## The claim taxonomy
 
 `agent/categories.py` classifies evidence into five categories:

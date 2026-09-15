@@ -85,26 +85,43 @@ _AVAILABILITY_DECIDED_METHODS = frozenset(
     ["hard_gate_unavailable", "flag_table", "flag_table_pooled"]
 )
 
-TAXONOMY_DESCRIPTIONS = (
-    "confirmed_starting -- a manager, press conference, or predicted lineup "
-    "names this player in the starting XI for the upcoming fixture -- a "
-    "specific role, position, or lineup slot, not just that the player is "
-    "fit or eligible.\n"
-    "available -- the player is fit, eligible, or has recovered enough to "
-    "be considered ('will be available', 'has returned', 'in contention', "
-    "'100% available', 'ready to feature'), but nothing states a specific "
-    "starting role or an explicit 'will start'. Use this rather than "
-    "confirmed_starting for fitness-only language with no lineup "
-    "specifics -- FPL's own status flag already covers plain fitness, so "
-    "this category exists purely so that genuine but non-specific good "
-    "news has somewhere correct to go instead of being read as a lineup "
-    "confirmation.\n"
-    "confirmed_out -- the player is ruled out (injury, suspension, "
-    "explicitly dropped) for the upcoming fixture.\n"
-    "rotation_risk -- credible reporting that the player may be rested or "
-    "rotated, short of an outright confirmed absence.\n"
-    "returning_from_injury -- the player is recovering and may or may not "
-    "be risked, per reporting."
+# One (category, description) pair per taxonomy entry, kept separate so
+# each one is readable and editable on its own rather than as one run-on
+# paragraph -- TAXONOMY_DESCRIPTIONS below joins them into the exact same
+# "name -- description" -- per-line string SYSTEM_PROMPT has always used.
+TAXONOMY = [
+    ("confirmed_starting",
+     "a manager, press conference, or predicted lineup names this player "
+     "in the starting XI for the upcoming fixture -- a specific role, "
+     "position, or lineup slot, not just that the player is fit or "
+     "eligible."),
+
+    ("available",
+     "the player is fit, eligible, or has recovered enough to be "
+     "considered ('will be available', 'has returned', 'in contention', "
+     "'100% available', 'ready to feature'), but nothing states a "
+     "specific starting role or an explicit 'will start'. Use this "
+     "rather than confirmed_starting for fitness-only language with no "
+     "lineup specifics -- FPL's own status flag already covers plain "
+     "fitness, so this category exists purely so that genuine but "
+     "non-specific good news has somewhere correct to go instead of "
+     "being read as a lineup confirmation."),
+
+    ("confirmed_out",
+     "the player is ruled out (injury, suspension, explicitly dropped) "
+     "for the upcoming fixture."),
+
+    ("rotation_risk",
+     "credible reporting that the player may be rested or rotated, "
+     "short of an outright confirmed absence."),
+
+    ("returning_from_injury",
+     "the player is recovering and may or may not be risked, per "
+     "reporting."),
+]
+
+TAXONOMY_DESCRIPTIONS = "\n".join(
+    "{0} -- {1}".format(category, description) for category, description in TAXONOMY
 )
 
 SYSTEM_PROMPT = """You are classifying Fantasy Premier League players ahead \
@@ -144,6 +161,13 @@ sources genuinely disagree about them -- report every distinct piece of \
 evidence you found rather than picking one to report. Each occurrence \
 needs its own category, quote, and source_url, exactly like a single \
 classification would.
+
+Vary your search angle rather than repeating similar queries or fetching \
+several pages from the same site -- try official/club-sourced team news, \
+press-conference quotes, and independent journalism as distinct searches, \
+not just whichever phrasing comes to mind first. A second search that \
+targets a different kind of source is a better use of your budget than a \
+second fetch from a source you already have.
 
 Respond with exactly one JSON object per turn, and nothing else -- no \
 markdown fences, no prose outside the JSON. Valid actions:

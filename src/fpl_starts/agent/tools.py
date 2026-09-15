@@ -39,7 +39,7 @@ class ToolBudget(object):
     for comparing model tiers -- see predict.MODEL_PRICING_PER_MTOK.
     """
 
-    def __init__(self, max_searches=3, max_fetches=2):
+    def __init__(self, max_searches=3, max_fetches=5):
         self.searches_remaining = max_searches
         self.fetches_remaining = max_fetches
         self.input_tokens = 0

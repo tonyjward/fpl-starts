@@ -164,7 +164,41 @@ defer to it).
 exactly — **0.50** — since `fit_category_rates` has no legitimate
 same-category history to shrink toward yet (see the priors section
 below). Final: `p_start = 0.50`, `method = "agent_rotation_risk"`, down
-from the baseline's 0.843. 
+from the baseline's 0.843.
+
+**One domain so far, not a diverse web search — and there's a concrete
+reason.** Across every agent snapshot ever archived — all three
+club-roster pilots (GW3, GW4, GW5; GW5's found no evidence at all) —
+every single piece of evidence has come from `sportsmole.co.uk`, 17 items
+and zero from anywhere else. Tracing all 5 distinct URLs involved: every
+one is the same content *format* — sportsmole runs a purpose-built
+`<Club> vs <Opponent> injury/suspension list + predicted XIs` page for
+every upcoming fixture, covering the whole squad's fitness picture in one
+article. Two things pushed the agent toward it every time: it writes its
+own search queries (no hardcoded template in `predict.py`), and whatever
+"team news"/"injury list"-style phrasing it lands on matches that page's
+own title almost exactly; and `ToolBudget`'s original default
+(`max_searches=3, max_fetches=2`) allowed only 2 page fetches for the
+*entire* roster, so the single most information-dense page available (one
+article covering most of the squad at once) was the rational choice even
+if the agent was aware other sources existed. Not obviously a bug, but a
+real limitation: the evidence base this was diagnosed from was closer to
+"one aggregator's take, verified" than genuine multi-source corroboration.
+
+**Widened 2026-09-15** in response: `max_fetches` raised to 5, and
+`SYSTEM_PROMPT` now explicitly asks the model to vary its search angle
+(official/club-sourced, press conference, independent journalism) rather
+than fetch several pages from the same site. Budget alone doesn't
+guarantee diversity — more fetches just means more sportsmole pages if
+the model's own query habits don't change too, which is why both changed
+together. This still only gets you more (and hopefully more varied)
+evidence for `agent/domain_stats.py` to measure — it doesn't close the
+loop on its own, since that module's own docstring is explicit that
+nothing it computes feeds back into `predict.py`'s blend yet. Actually
+letting the system act on "which sources are reliable" needs a second
+piece of work: wiring `fit_domain_rates`'s output into `_blend_verified`'s
+weighting, the same kind of question the old repo's `SOURCE_TIER_WEIGHTS`
+already flags as a tunable knob to answer empirically, not assume.
 
 ## The claim taxonomy
 

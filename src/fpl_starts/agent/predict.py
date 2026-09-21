@@ -266,6 +266,24 @@ def get_opponent(conn, season, target_round, team_name):
     return row["opponent"].iloc[0]
 
 
+def list_teams_for_round(conn, season, target_round):
+    """Every club name with a fixture recorded in `target_round`, sorted --
+    what `--team` defaults to when the CLI isn't told to run a specific
+    subset, so a gameweek run covers every fixture without someone typing
+    out 20 club names by hand. Empty (not an error) for a blank gameweek or
+    a round whose fixtures haven't been archived yet -- the caller decides
+    whether that's fatal.
+    """
+    rows = pd.read_sql(
+        "SELECT DISTINCT t.name AS name FROM fixtures f "
+        "JOIN teams t ON t.code = f.team_code "
+        "WHERE f.season = ? AND f.round = ? "
+        "ORDER BY t.name",
+        conn, params=(season, target_round),
+    )
+    return rows["name"].tolist()
+
+
 def _extract_json_object(text):
     """The first top-level JSON object found in `text`, tolerating markdown
     fences, a hallucinated <function_calls> wrapper, or narrative prose
@@ -725,9 +743,10 @@ def _main():
                         help="Defaults to one season before --season.")
     parser.add_argument("--target-round", type=int, default=None,
                         help="Defaults to (max archived round) + 1.")
-    parser.add_argument("--team", action="append", required=True,
+    parser.add_argument("--team", action="append", default=None,
                         help="Club name (as it appears in the teams table), "
-                             "repeatable.")
+                             "repeatable. Defaults to every club with a "
+                             "fixture in --target-round.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--predictions-dir", default=starts_model.PREDICTIONS_DIR)
     args = parser.parse_args()
@@ -757,10 +776,25 @@ def _main():
         )["r"].iloc[0]
         target_round = int(max_round) + 1 if max_round is not None else 1
 
+    teams = args.team
+    if teams is None:
+        teams = list_teams_for_round(conn, season, target_round)
+        if not teams:
+            conn.close()
+            raise SystemExit(
+                "no fixtures archived for {0} round {1} -- run fpl-starts-archive "
+                "+ fpl-starts-derive first, or pass --team explicitly".format(
+                    season, target_round
+                )
+            )
+        print("no --team given; running every club with a fixture in round {0}: {1}".format(
+            target_round, ", ".join(teams)
+        ))
+
     frames = []
     failed_teams = []
     total_usage = {"input_tokens": 0, "output_tokens": 0, "llm_calls": 0}
-    for team_name in args.team:
+    for team_name in teams:
         print("classifying {0}...".format(team_name))
         try:
             frame = predict_club_agent(

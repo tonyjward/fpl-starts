@@ -15,6 +15,7 @@ from fpl_starts.agent.predict import (
     _blend_verified,
     estimate_cost_usd,
     get_opponent,
+    list_teams_for_round,
     load_club_roster,
     predict_club_agent,
     run_agent_loop,
@@ -165,6 +166,29 @@ def test_get_opponent_none_when_no_fixture_recorded(tmp_path):
         players=[], teams_rows=[(1, "Leeds")], gameweek_rows=[],
     )
     assert get_opponent(conn, SEASON, 4, "Leeds") is None
+
+
+def test_list_teams_for_round_returns_every_club_with_a_fixture(tmp_path):
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[], gameweek_rows=[],
+        teams_rows=[(1, "Leeds"), (2, "Newcastle"), (3, "Arsenal")],
+        fixtures_rows=[
+            (SEASON, 4, 1, 2), (SEASON, 4, 2, 1),
+            (SEASON, 5, 3, 1), (SEASON, 5, 1, 3),
+        ],
+    )
+    assert list_teams_for_round(conn, SEASON, 4) == ["Leeds", "Newcastle"]
+    assert list_teams_for_round(conn, SEASON, 5) == ["Arsenal", "Leeds"]
+    conn.close()
+
+
+def test_list_teams_for_round_empty_when_no_fixtures_archived(tmp_path):
+    conn = make_derived_db(
+        str(tmp_path / "d.db"),
+        players=[], teams_rows=[(1, "Leeds")], gameweek_rows=[],
+    )
+    assert list_teams_for_round(conn, SEASON, 4) == []
     conn.close()
 
 

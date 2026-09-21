@@ -100,13 +100,30 @@ identified next step, not an oversight.
 
 ```
 uv sync
+```
+
+### Before the deadline: choosing your team
+
+```
 uv run fpl-starts-archive                       # archive today's FPL data
 uv run fpl-starts-derive                        # rebuild the derived SQLite layer
 uv run fpl-starts-predict                       # predict the next unplayed gameweek
-uv run fpl-starts-agent-predict --team "Arsenal" # agent challenger, one club roster at a time
+uv run fpl-starts-agent-predict          # agent challenger, every club with a fixture that round
 uv run fpl-starts-derive                        # rebuild again, to pick up predictions
-uv run fpl-starts-score --target-round N        # once gameweek N is played
+```
+
+### After the gameweek: reviewing accuracy
+
+```
+uv run fpl-starts-archive                       # pick up the finished gameweek's results
+uv run fpl-starts-derive                        # rebuild to pick up actual outcomes
+uv run fpl-starts-score --target-round N        # once gameweek N is data_checked
 uv run fpl-starts-agent-report                  # per-domain accuracy for the agent's evidence
+```
+
+### Maintenance
+
+```
 uv run python -m fpl_starts.quarantine --season 2026-27  # move out any post-deadline snapshot
 ```
 

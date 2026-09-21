@@ -19,17 +19,9 @@ from langgraph.prebuilt import create_react_agent
 
 import data
 
-# Loaded in priority order (first one that sets a given var wins --
-# load_dotenv never overrides an already-set os.environ value, including
-# one set by an earlier call here): this project's own .env first (so a
-# standalone fpl-starts checkout has an obvious place to put a key), then
-# the private news repo's, purely for this user's own convenience since
-# that's where the key already lives -- never required, dashboard/README.md
-# covers running without it. Neither path existing is not an error.
+# load environment variables
 _HERE = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(_HERE, ".env"))
 load_dotenv(os.path.join(_HERE, "..", ".env"))
-load_dotenv(os.path.join(_HERE, "..", "..", "fpl", ".env"))
 
 SEASON = "2026-27"
 PRIOR_SEASON = "2025-26"

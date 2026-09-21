@@ -19,13 +19,13 @@ uv run streamlit run app.py
 The chat tab needs `ANTHROPIC_API_KEY` (and, only if your key isn't
 scoped to a single workspace, `ANTHROPIC_WORKSPACE_ID` -- confirmed live:
 an unscoped key 400s on every request without it). `agent.py` loads both
-via `python-dotenv` automatically, checking in order: `.env` in this
-directory, `.env` in the `fpl-starts` root, then `../fpl/.env` (the
-private news repo's, purely for convenience if you have it checked out
-alongside this one) -- first one that sets a variable wins, and none of
-this is required if the variables are already in your shell environment
-(`ant auth login` also works, with no env var at all). None of these
-`.env` files are tracked in git.
+via `python-dotenv` automatically from a `.env` file in this directory,
+or in the `fpl-starts` root (first one that sets a variable wins) -- put
+one there yourself, it isn't provided. Deliberately doesn't look outside
+this repo (a sibling private repo's `.env`, say) -- none of this is
+required if the variables are already in your shell environment (`ant
+auth login` also works, with no env var at all). `.env` files here are
+gitignored.
 
 Run from this directory -- `data.py`'s default DB paths (`../derived.db`
 for this repo's own, `../../fpl/derived.db` for the private news repo's)

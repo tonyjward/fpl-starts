@@ -173,7 +173,9 @@ targets a different kind of source is a better use of your budget than a \
 second fetch from a source you already have.
 
 Respond with exactly one JSON object per turn, and nothing else -- no \
-markdown fences, no prose outside the JSON. Valid actions:
+markdown fences, no prose outside the JSON, no <function_calls> tags or \
+any other wrapper, and never more than one action per turn even if you \
+can see several steps ahead. Valid actions:
 
 {{"action": "search_web", "query": "..."}}
 {{"action": "fetch_page_text", "url": "..."}}
@@ -264,16 +266,32 @@ def get_opponent(conn, season, target_round, team_name):
     return row["opponent"].iloc[0]
 
 
-def _strip_json_fences(text):
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines)
-    return text.strip()
+def _extract_json_object(text):
+    """The first top-level JSON object found in `text`, tolerating markdown
+    fences, a hallucinated <function_calls> wrapper, or narrative prose
+    around it -- live runs show claude-haiku-4-5 doesn't reliably follow
+    "exactly one JSON object and nothing else" (see run_agent_loop), and
+    a whole turn used to be wasted on a parse-failure retry every time it
+    didn't. Only the first balanced {...} is parsed, so a truncated
+    multi-action response (the model tried to plan several turns at once
+    and hit max_tokens) still yields its first, complete action instead of
+    failing outright. Raises ValueError, like json.loads, if none parses.
+    """
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except ValueError:
+                        break
+        start = text.find("{", start + 1)
+    raise ValueError("No valid JSON object found in: {0!r}".format(text[:200]))
 
 
 def _extract_response_text(message):
@@ -324,7 +342,7 @@ def _create_message_with_one_retry(llm_client, model, messages, budget):
     for attempt in range(2):
         try:
             response = llm_client.messages.create(
-                model=model, system=SYSTEM_PROMPT, max_tokens=1024, messages=messages,
+                model=model, system=SYSTEM_PROMPT, max_tokens=4096, messages=messages,
             )
             budget.record_llm_usage(response)
             return response
@@ -336,7 +354,7 @@ def _create_message_with_one_retry(llm_client, model, messages, budget):
 
 
 def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=None,
-                    search_web=None, fetch_page_text=None, max_turns=12,
+                    search_web=None, fetch_page_text=None, max_turns=20,
                     max_reclassifications=1):
     """The manual ReAct loop -- see module docstring for why it's manual.
 
@@ -401,7 +419,7 @@ def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=N
         messages.append({"role": "assistant", "content": text})
 
         try:
-            action = json.loads(_strip_json_fences(text))
+            action = _extract_json_object(text)
         except ValueError:
             messages.append({
                 "role": "user",
@@ -458,7 +476,12 @@ def run_agent_loop(llm_client, model, team_name, roster, budget, opponent_name=N
                 budget.take_fetch()
                 page_text = fetch_page_text(url)
                 fetched_pages[url] = page_text
-                observation = page_text
+                # A page that returns no extractable text (blocked, JS-
+                # rendered, paywalled) used to become an empty-string user
+                # message here, which the API rejects outright (400: "user
+                # messages must have non-empty content") and aborted the
+                # whole club rather than just that one fetch.
+                observation = page_text or "(no readable text extracted from that page)"
             except ToolBudgetExceeded:
                 observation = (
                     "Fetch budget exhausted. Call final_answer with what "

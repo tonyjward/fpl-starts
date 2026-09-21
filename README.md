@@ -117,7 +117,7 @@ uv run fpl-starts-derive                        # rebuild again, to pick up pred
 ```
 uv run fpl-starts-archive                       # pick up the finished gameweek's results
 uv run fpl-starts-derive                        # rebuild to pick up actual outcomes
-uv run fpl-starts-score --target-round N        # once gameweek N is data_checked
+uv run fpl-starts-score                         # scores the latest archived (played) round
 uv run fpl-starts-agent-report                  # per-domain accuracy for the agent's evidence
 ```
 

@@ -229,7 +229,9 @@ def _main():
                         help="Defaults to the only season in derived.db.")
     parser.add_argument("--prior-season", default=None,
                         help="Defaults to one season before --season.")
-    parser.add_argument("--target-round", type=int, required=True)
+    parser.add_argument("--target-round", type=int, default=None,
+                        help="Defaults to the most recently archived "
+                             "(played/data_checked) round.")
     args = parser.parse_args()
 
     conn = sqlite3.connect(args.db_path)
@@ -249,17 +251,31 @@ def _main():
         start_year = int(season[:4]) - 1
         prior_season = "{0}-{1:02d}".format(start_year, (start_year + 1) % 100)
 
+    target_round = args.target_round
+    if target_round is None:
+        max_round = pd.read_sql(
+            "SELECT MAX(round) AS r FROM player_gameweek_stats WHERE season = ?",
+            conn, params=(season,),
+        )["r"].iloc[0]
+        if max_round is None:
+            raise SystemExit(
+                "no outcomes archived for {0} yet -- pass --target-round "
+                "explicitly, or run fpl-starts-archive + fpl-starts-derive "
+                "once a gameweek is played".format(season)
+            )
+        target_round = int(max_round)
+
     pd.set_option("display.width", 120)
 
-    model_versions = list_model_versions(conn, season, args.target_round)
+    model_versions = list_model_versions(conn, season, target_round)
     print("{0} round {1}, scored against {2}:\n".format(
-        season, args.target_round, prior_season
+        season, target_round, prior_season
     ))
 
     if len(model_versions) > 1:
-        report = compare_models(conn, season, prior_season, args.target_round, model_versions)
+        report = compare_models(conn, season, prior_season, target_round, model_versions)
     else:
-        report = score_gameweek(conn, season, prior_season, args.target_round)
+        report = score_gameweek(conn, season, prior_season, target_round)
     conn.close()
 
     print(report.round(4).to_string())

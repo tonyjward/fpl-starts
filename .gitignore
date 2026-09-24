@@ -6,3 +6,4 @@ db/
 predictions/
 src/*.egg-info/
 .env
+data/

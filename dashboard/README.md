@@ -27,8 +27,8 @@ required if the variables are already in your shell environment (`ant
 auth login` also works, with no env var at all). `.env` files here are
 gitignored.
 
-Run from this directory -- `data.py`'s default DB paths (`../derived.db`
-for this repo's own, `../../fpl/derived.db` for the private news repo's)
+Run from this directory -- `data.py`'s default DB paths (`../db/derived.db`
+for this repo's own, `../../fpl/db/derived.db` for the private news repo's)
 are relative to it. Override with `FPL_DASHBOARD_FPL_STARTS_DB` /
 `FPL_DASHBOARD_NEWS_DB` if you run it from somewhere else, or don't have
 the private repo checked out at all -- the fpl-starts side works

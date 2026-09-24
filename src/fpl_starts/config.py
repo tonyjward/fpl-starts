@@ -7,8 +7,11 @@ tool (`fpl-starts-archive`/`-derive`/`-predict`/`-score`) also takes an
 explicit override (`--base-dir`, `--db-path`, `--predictions-dir`) for
 anyone wiring this package into a larger pipeline -- see README.md's
 "Running the pipeline" section.
+
+The database lives under `db/`; `derived.rebuild()` (the only writer)
+creates that directory on first use.
 """
 
 RAW_DIR = "raw"
-DERIVED_DB_PATH = "derived.db"
+DERIVED_DB_PATH = "db/derived.db"
 PREDICTIONS_DIR = "predictions"

@@ -570,6 +570,9 @@ def rebuild(base_dir=archiver.RAW_DIR, db_path=DERIVED_DB_PATH, seasons=None,
     if seasons is None:
         seasons = _seasons_in_archive(base_dir)
 
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(

@@ -22,9 +22,9 @@ _USER_AGENT = "Mozilla/5.0 (compatible; fpl-dashboard/0.1)"
 # via env var for anyone running the dashboard from a different working
 # directory, or without the private repo checked out at all (the fpl-starts
 # side works standalone; FPL_NEWS_DB_PATH is optional).
-FPL_STARTS_DB_PATH = os.environ.get("FPL_DASHBOARD_FPL_STARTS_DB", os.path.join("..", "derived.db"))
+FPL_STARTS_DB_PATH = os.environ.get("FPL_DASHBOARD_FPL_STARTS_DB", os.path.join("..", "db", "derived.db"))
 FPL_NEWS_DB_PATH = os.environ.get(
-    "FPL_DASHBOARD_NEWS_DB", os.path.join("..", "..", "fpl", "derived.db")
+    "FPL_DASHBOARD_NEWS_DB", os.path.join("..", "..", "fpl", "db", "derived.db")
 )
 
 

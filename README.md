@@ -127,9 +127,12 @@ uv run fpl-starts-agent-report                  # per-domain accuracy for the ag
 uv run python -m fpl_starts.quarantine --season 2026-27  # move out any post-deadline snapshot
 ```
 
-Each command takes `--help` for its full options (`--base-dir`, `--db-path`,
-`--season`, `--target-round`, etc.) -- all default to sensible relative
-paths from wherever you run them.
+Run from the repo root, these write `raw/` (the archive), `db/derived.db`
+(the derived SQLite layer; `db/` is created on first rebuild) and
+`predictions/`. Each command takes `--help` for its full options
+(`--base-dir`, `--db-path`, `--predictions-dir`, `--season`,
+`--target-round`, etc.) -- all default to those relative paths from
+wherever you run them, and an explicit flag always wins.
 
 ## Tests
 

@@ -587,3 +587,41 @@ def test_load_fixtures_resolves_team_ids_to_codes_both_directions(tmp_path):
 
 
 
+
+
+def test_default_db_path_is_under_db_dir():
+    """Default layout from the repo root is raw/, db/derived.db, predictions/
+    -- all relative to the working directory, never to this package's
+    install location."""
+    from fpl_starts import config
+    assert config.RAW_DIR == "raw"
+    assert config.DERIVED_DB_PATH == os.path.join("db", "derived.db")
+    assert config.PREDICTIONS_DIR == "predictions"
+    assert not os.path.isabs(config.DERIVED_DB_PATH)
+
+
+def test_rebuild_with_defaults_creates_db_dir_relative_to_cwd(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    seed_consistent_archive("raw")
+
+    seasons = derived.rebuild()
+
+    assert seasons == [SEASON]
+    assert (tmp_path / "db" / "derived.db").is_file()
+    assert not (tmp_path / "derived.db").exists()
+
+
+def test_derive_cli_explicit_paths_win_over_defaults(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    base_dir = str(tmp_path / "elsewhere" / "raw")
+    seed_consistent_archive(base_dir)
+    db_path = str(tmp_path / "custom" / "nested" / "my.db")
+    monkeypatch.setattr("sys.argv", [
+        "fpl-starts-derive", "--base-dir", base_dir, "--db-path", db_path,
+        "--predictions-dir", str(tmp_path / "preds"),
+    ])
+
+    derived._main()
+
+    assert os.path.isfile(db_path)
+    assert not (tmp_path / "db").exists()

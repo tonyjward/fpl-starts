@@ -81,6 +81,40 @@ misleading (Deep/never-starting players are ~41% of rows and trivially
 predictable, and dominate any pool average) and why Rotation-stratum Brier
 is the number that actually matters.
 
+## Logistic P(start): the interpretable ML model
+
+> **Modelling case study:** see
+> [`notebooks/logistic_p_start_model.ipynb`](notebooks/logistic_p_start_model.ipynb)
+> for the feature-selection, temporal-validation, calibration and
+> player-level explainability walkthrough.
+
+`src/fpl_starts/ml/` adds `logistic_availability`: a six-predictor logistic
+regression (FPL availability status, last gameweek's role, minutes in the
+three gameweeks before that, this season's and last season's start rate,
+new-signing flag) built so every coefficient can be read on its own and
+every prediction is stored with its full log-odds breakdown.
+
+- Trained on 2023-24 to 2025-26 only, then frozen; 2026-27 is scored
+  prospectively and never used to refit, retune or recalibrate it.
+- On the development seasons it cuts Brier by 24.6% overall and 18.9% in
+  the Rotation stratum against a naive P(start | started last gameweek).
+- Needs local historical inputs under `data/` that are intentionally not
+  distributed with this repository.
+
+```
+uv run fpl-starts-logistic-evaluate                # historical walk-forward
+uv run fpl-starts-logistic-train                   # fit and freeze (once)
+uv run fpl-starts-logistic-predict --target-round 6
+uv run fpl-starts-logistic-case-study              # aggregates for the notebook
+uv run --group notebook jupyter nbconvert --to notebook --execute --inplace \
+    notebooks/logistic_p_start_model.ipynb
+```
+
+See `docs/logistic_p_start_model.md` for the operational reference
+(commands, outputs, the rules around the frozen model, how to read a stored
+prediction) and `docs/logistic_p_start_modelling_log.md` for the decisions
+behind it.
+
 ## What's deliberately not here
 
 The news-scraping/LLM-extraction evidence layer that predates the agent

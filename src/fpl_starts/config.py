@@ -10,8 +10,15 @@ anyone wiring this package into a larger pipeline -- see README.md's
 
 The database lives under `db/`; `derived.rebuild()` (the only writer)
 creates that directory on first use.
+
+`DATA_DIR` and `MODELS_DIR` belong to the logistic P(start) model
+(`fpl_starts.ml`): `data/` holds local-only historical inputs that are
+deliberately not distributed with this repository, and `models/` holds
+locally fitted model artefacts. Both are gitignored.
 """
 
 RAW_DIR = "raw"
 DERIVED_DB_PATH = "db/derived.db"
 PREDICTIONS_DIR = "predictions"
+DATA_DIR = "data"
+MODELS_DIR = "models"

@@ -7,3 +7,5 @@ predictions/
 src/*.egg-info/
 .env
 data/
+models/
+.ipynb_checkpoints/

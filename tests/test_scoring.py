@@ -1,6 +1,6 @@
 """Tests for scoring.py.
 
-Same faking approach as test_starts_model.py: the community archive is
+Same faking approach as test_history.py: the community archive is
 faked via an injected `fetch(path) -> bytes`, and derived.db is a minimal
 sqlite connection carrying just the columns scoring.py reads.
 """
@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from fpl_starts import scoring
-from fpl_starts import starts_model
+from fpl_starts import history
 
 SEASON = "2026-27"
 PRIOR_SEASON = "2025-26"
@@ -133,7 +133,7 @@ def test_score_gameweek_raises_if_predictions_missing(tmp_path):
     )
     fetch = make_fake_fetch({})
 
-    with pytest.raises(scoring.ScoringError, match="no archived 'raw_lookup' predictions"):
+    with pytest.raises(scoring.ScoringError, match="no archived 'logistic_availability' predictions"):
         scoring.score_gameweek(conn, SEASON, PRIOR_SEASON, 3, fetch=fetch)
     conn.close()
 
@@ -143,7 +143,7 @@ def test_score_gameweek_raises_if_outcomes_missing(tmp_path):
         str(tmp_path / "derived.db"),
         players=[(1001, "Alice")],
         gameweek_rows=[],
-        prediction_rows=[(1001, SEASON, 3, "raw_lookup", 0.8, 0)],
+        prediction_rows=[(1001, SEASON, 3, "logistic_availability", 0.8, 0)],
     )
     fetch = make_fake_fetch({})
 
@@ -170,7 +170,7 @@ def test_score_gameweek_reports_pool_and_beats_persistence(tmp_path):
         players=[(1001, "Alice")],
         gameweek_rows=[(1001, SEASON, 1, 0), (1001, SEASON, 2, 0),
                        (1001, SEASON, 3, 1)],
-        prediction_rows=[(1001, SEASON, 3, "raw_lookup", 0.75, 0)],
+        prediction_rows=[(1001, SEASON, 3, "logistic_availability", 0.75, 0)],
     )
 
     report = scoring.score_gameweek(conn, SEASON, PRIOR_SEASON, 3, fetch=fetch)
@@ -198,7 +198,7 @@ def test_score_gameweek_debut_player_labelled_deep_not_dropped(tmp_path):
         players=[(1001, "Alice"), (9999, "Debutant")],
         gameweek_rows=[(1001, SEASON, 1, 1), (1001, SEASON, 2, 1),
                        (1001, SEASON, 3, 1), (9999, SEASON, 3, 1)],
-        prediction_rows=[(1001, SEASON, 3, "raw_lookup", 0.85, 0), (9999, SEASON, 3, "raw_lookup", 0.28, 1)],
+        prediction_rows=[(1001, SEASON, 3, "logistic_availability", 0.85, 0), (9999, SEASON, 3, "logistic_availability", 0.28, 1)],
     )
 
     report = scoring.score_gameweek(conn, SEASON, PRIOR_SEASON, 3, fetch=fetch)

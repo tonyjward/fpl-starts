@@ -449,8 +449,8 @@ def _load_availability_snapshots(conn, base_dir, season):
 def _load_predictions(conn, predictions_dir, season):
     """One row per (code, season, target_round, model_version) -- the
     *latest* snapshot for each (gameweek, model_version) pair, not every
-    run. Unlike the raw archive, an unchanged-inputs rerun of
-    starts_model.py is a pure duplicate today (no new information), so
+    run. Unlike the raw archive, an unchanged-inputs rerun of a
+    model is a pure duplicate (no new information), so
     keeping only the latest is a real simplification, not a loss: docs
     Section 8a's scoring loop wants "the prediction as it stood before
     kickoff" -- the last one -- and every run is still on disk under
@@ -458,10 +458,9 @@ def _load_predictions(conn, predictions_dir, season):
     ever makes reruns genuinely differ and that history needs mining.
 
     `model_version` distinguishes different prediction methods for the same
-    gameweek (e.g. "raw_lookup" vs "refined_availability") so scoring.py can
-    compare them -- see starts_model.py. Snapshots written before this
-    dimension existed have no "model_version" key; treated as "raw_lookup"
-    for backward compatibility.
+    gameweek so scoring.py can compare them. Snapshots written before this
+    dimension existed have no "model_version" key; they came from the
+    retired lookup-table model, so they are read as "raw_lookup".
     """
     season_dir = os.path.join(predictions_dir, season)
     if not os.path.isdir(season_dir):

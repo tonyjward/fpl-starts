@@ -16,10 +16,10 @@ predictions being scored -- never from the round being scored, which would
 leak the answer into the stratum that matters most (Section 8.0 rule 2).
 
 Both predictions and actual outcomes must already be archived: predictions
-via starts_model.py + derived.py, outcomes via the raw archiver + derived.py
+via a model's snapshot + derived.py, outcomes via the raw archiver + derived.py
 once the gameweek's data_checked. This module only reads derived.db and the
 community archive (for the persistence/season-rate baselines, which need
-the same cross-season history starts_model.py uses to predict) -- it never
+the same cross-season history (history.py)) -- it never
 writes anything.
 """
 
@@ -27,7 +27,7 @@ import os
 
 import pandas as pd
 
-from . import starts_model
+from . import history
 
 STRATA = ["Core", "Rotation", "Marginal", "Deep"]
 
@@ -100,9 +100,9 @@ def load_actual_outcomes(conn, season, target_round):
     return df[["code", "y"]]
 
 
-def load_scored_predictions(conn, season, target_round, model_version="raw_lookup"):
+def load_scored_predictions(conn, season, target_round, model_version="logistic_availability"):
     """code, p_start, cold_start for one archived gameweek's predictions
-    from one model version (see starts_model.py's module docstring)."""
+    from one model version."""
     return pd.read_sql(
         "SELECT code, p_start, cold_start FROM predictions "
         "WHERE season = ? AND target_round = ? AND model_version = ?",
@@ -119,7 +119,7 @@ def list_model_versions(conn, season, target_round):
     )["model_version"].tolist()
 
 
-def score_gameweek(conn, season, prior_season, target_round, model_version="raw_lookup",
+def score_gameweek(conn, season, prior_season, target_round, model_version="logistic_availability",
                     fetch=None):
     """Score one model_version's archived `predictions` for (season,
     target_round) against actual outcomes, stratified per Section 8b.
@@ -131,7 +131,7 @@ def score_gameweek(conn, season, prior_season, target_round, model_version="raw_
     replacement -- see accuracy()'s docstring for why it can't stand alone.
 
     Baselines are built from the same cross-season history
-    starts_model.predict_gameweek used, via the same public functions, so
+    history.py builds, via the same public functions, so
     "beats persistence" is a fair comparison against what was actually
     available at prediction time -- not a baseline with the benefit of
     hindsight.
@@ -140,7 +140,7 @@ def score_gameweek(conn, season, prior_season, target_round, model_version="raw_
     if len(predictions) == 0:
         raise ScoringError(
             "no archived '{0}' predictions for {1} round {2} -- run "
-            "starts_model.py and derived.py first".format(
+            "the model and fpl-starts-derive first".format(
                 model_version, season, target_round
             )
         )
@@ -152,14 +152,14 @@ def score_gameweek(conn, season, prior_season, target_round, model_version="raw_
         )
 
     if fetch is None:
-        fetch = starts_model.fetch_community_archive
-    prior_df = starts_model.load_prior_season_starts(fetch, prior_season)
-    current_df = starts_model.load_current_season_starts(conn, season)
+        fetch = history.fetch_community_archive
+    prior_df = history.load_prior_season_starts(fetch, prior_season)
+    current_df = history.load_current_season_starts(conn, season)
     train_current = current_df[current_df["GW"] < target_round]
-    combined = starts_model.build_xseason_features(prior_df, train_current)
+    combined = history.build_xseason_features(prior_df, train_current)
 
     strata = label_strata(combined[["code", "y"]])
-    persistence_source = starts_model.next_period_features(combined)
+    persistence_source = history.next_period_features(combined)
     season_rate = combined.groupby("code")["y"].mean()
     pool_fallback_rate = float(prior_df["y"].mean()) if len(prior_df) else 0.5
 
@@ -200,9 +200,7 @@ def compare_models(conn, season, prior_season, target_round, model_versions, fet
     (n, persistence, season_rate, constant_0.9 -- identical regardless of
     which model is being scored, so computed once) plus a `<model_version>
     _brier` and `<model_version>_accuracy` column pair per version. This is
-    what actually answers "did refining help": e.g. compare
-    ["raw_lookup", "refined_availability"] to see whether docs Section 4.1's
-    availability routing beat the plain lookup table, per stratum.
+    what actually answers "is one model better than another", per stratum.
     """
     combined = None
     for model_version in model_versions:
@@ -221,7 +219,7 @@ def report_for_round(conn, season, prior_season, target_round, fetch=None):
     model_versions = list_model_versions(conn, season, target_round)
     if len(model_versions) > 1:
         return compare_models(conn, season, prior_season, target_round, model_versions, fetch=fetch)
-    model_version = model_versions[0] if model_versions else "raw_lookup"
+    model_version = model_versions[0] if model_versions else "logistic_availability"
     return score_gameweek(conn, season, prior_season, target_round,
                           model_version=model_version, fetch=fetch)
 

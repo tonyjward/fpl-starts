@@ -266,3 +266,26 @@ def test_compare_models_side_by_side(tmp_path):
     )
 
 
+
+
+def test_report_for_round_scores_a_lone_non_default_model(tmp_path):
+    """A round whose only archived predictions come from a model other than
+    raw_lookup is scored under that model, not rejected as missing."""
+    fetch = make_fake_fetch({
+        PRIOR_SEASON + "/gws/merged_gw.csv": merged_gw_csv(
+            [{"element": 1, "GW": g, "starts": 1} for g in range(1, 39)]
+        ),
+        PRIOR_SEASON + "/players_raw.csv": players_raw_csv([(1, 1001)]),
+    })
+    conn = make_derived_db(
+        str(tmp_path / "derived.db"),
+        players=[(1001, "Alice")],
+        gameweek_rows=[(1001, SEASON, 1, 1), (1001, SEASON, 2, 1)],
+        prediction_rows=[(1001, SEASON, 2, "logistic_availability", 0.9, 0)],
+    )
+
+    report = scoring.report_for_round(conn, SEASON, PRIOR_SEASON, 2, fetch=fetch)
+    conn.close()
+
+    assert report.loc["POOL", "n"] == 1
+    assert report.loc["POOL", "model"] == pytest.approx(0.01)

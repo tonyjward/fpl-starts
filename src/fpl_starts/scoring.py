@@ -215,6 +215,17 @@ def compare_models(conn, season, prior_season, target_round, model_versions, fet
     return combined
 
 
+def report_for_round(conn, season, prior_season, target_round, fetch=None):
+    """Score whichever model versions have archived predictions for this
+    round: side by side when there are several, the one alone otherwise."""
+    model_versions = list_model_versions(conn, season, target_round)
+    if len(model_versions) > 1:
+        return compare_models(conn, season, prior_season, target_round, model_versions, fetch=fetch)
+    model_version = model_versions[0] if model_versions else "raw_lookup"
+    return score_gameweek(conn, season, prior_season, target_round,
+                          model_version=model_version, fetch=fetch)
+
+
 def _main():
     import argparse
     import sqlite3
@@ -267,15 +278,11 @@ def _main():
 
     pd.set_option("display.width", 120)
 
-    model_versions = list_model_versions(conn, season, target_round)
     print("{0} round {1}, scored against {2}:\n".format(
         season, target_round, prior_season
     ))
 
-    if len(model_versions) > 1:
-        report = compare_models(conn, season, prior_season, target_round, model_versions)
-    else:
-        report = score_gameweek(conn, season, prior_season, target_round)
+    report = report_for_round(conn, season, prior_season, target_round)
     conn.close()
 
     print(report.round(4).to_string())

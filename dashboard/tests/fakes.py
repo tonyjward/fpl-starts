@@ -39,7 +39,8 @@ PLAYERS = [
     (22, "Wilson", "Callum", "Wilson", 12, 4),
     (23, "Wilson", "Harry", "Wilson", 13, 3),
 ]
-TEAMS = ["ARS", "CRY", "EVE", "LIV", "MCI", "MUN", "NEW", "CHE", "LEE", "IPS", "AVL", "WHU", "FUL"]
+TEAMS = ["Arsenal", "Crystal Palace", "Everton", "Liverpool", "Man City", "Man Utd", "Newcastle", "Chelsea",
+         "Leeds", "Ipswich", "Aston Villa", "West Ham", "Fulham"]
 SQUAD_ELEMENTS = list(range(1, 16))
 
 
@@ -50,7 +51,7 @@ def code(element):
 def bootstrap():
     return {
         "events": [{"id": gw, "finished": gw <= LAST_COMPLETED_GW} for gw in range(1, 39)],
-        "teams": [{"id": i + 1, "short_name": name} for i, name in enumerate(TEAMS)],
+        "teams": [{"id": i + 1, "name": name, "short_name": name[:3].upper()} for i, name in enumerate(TEAMS)],
         "element_types": [{"id": 1, "singular_name_short": "GKP"}, {"id": 2, "singular_name_short": "DEF"},
                           {"id": 3, "singular_name_short": "MID"}, {"id": 4, "singular_name_short": "FWD"}],
         "elements": [{"id": e, "code": code(e), "web_name": w, "first_name": f, "second_name": s, "known_name": "",

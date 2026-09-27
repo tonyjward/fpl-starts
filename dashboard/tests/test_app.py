@@ -60,8 +60,10 @@ def test_happy_path_no_transfers(fake_fpl):
     at = _submit_transfers(at, "No changes")
     assert at.session_state["transfer_state_confirmed"] is True
     table = _predictions_table(at)
-    assert sorted(table["web_name"]) == sorted(p[1] for p in fakes.PLAYERS[:15])
+    assert sorted(table["Player"]) == sorted(p[1] for p in fakes.PLAYERS[:15])
     assert fake_fpl == [("2026-27", fakes.LAST_COMPLETED_GW + 1, "registered_snapshot")]
+    assert len(at.tabs[0].radio) == 0 and len(at.tabs[0].number_input) == 0  # no source/gameweek options
+    assert "Latest forecast from logistic_availability_v1" in at.tabs[0].caption[0].value
 
     at.run()  # a plain rerun keeps the validated team
     assert not any(w.key == "team_id_input" for w in at.text_input)
@@ -71,10 +73,12 @@ def test_happy_path_no_transfers(fake_fpl):
 def test_transfer_changes_every_prediction_view(fake_fpl):
     at = _submit_team_id(_start(), str(fakes.VALID_TEAM_ID))
     at = _submit_transfers(at, "I transferred João Pedro out for Dominic Calvert-Lewin.")
-    names = set(_predictions_table(at)["web_name"])
+    names = set(_predictions_table(at)["Player"])
     assert "Calvert-Lewin" in names and "João Pedro" not in names
     squad_view = at.tabs[1].dataframe[0].value
-    assert "Calvert-Lewin" in set(squad_view["web_name"]) and "João Pedro" not in set(squad_view["web_name"])
+    assert "Calvert-Lewin" in set(squad_view["Player"]) and "João Pedro" not in set(squad_view["Player"])
+    assert squad_view.set_index("Player").loc["Calvert-Lewin", "Role"] == "Transferred in"
+    assert squad_view.set_index("Player").loc["Haaland", "Role"] == "Captain"
     assert all("João Pedro" not in option for option in at.selectbox(key="pred_player").options)
 
 

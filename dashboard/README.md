@@ -17,14 +17,6 @@ uv sync
 uv run streamlit run app.py
 ```
 
-Live predictions (see below) must be started from the repo root instead,
-because the raw archive's manifest records paths relative to it:
-
-```
-cd ..
-uv run --project dashboard streamlit run dashboard/app.py
-```
-
 The chat tab needs `ANTHROPIC_API_KEY` (and, only if your key isn't
 scoped to a single workspace, `ANTHROPIC_WORKSPACE_ID` -- confirmed live:
 an unscoped key 400s on every request without it). `agent.py` loads both
@@ -46,13 +38,12 @@ this repo is read.
 Everything goes through `fpl_starts.pstart` -- the dashboard never builds
 features or applies coefficients itself:
 
-- **Registered snapshot** (default): the latest `logistic_availability_v1`
-  snapshot in `predictions/`, written before the deadline by
-  `fpl-starts-logistic-predict`. Only read, never written or replaced.
-- **Live**: the frozen model (`models/`, loaded once) applied to the current
-  pre-cutoff inputs (`db/derived.db`, `raw/`, `data/`) -- the same feature
-  construction as `fpl-starts-logistic-predict`, but nothing is fitted or
-  saved.
+The app shows one thing: the latest registered `logistic_availability_v1`
+forecast for the upcoming gameweek (the one after the last completed
+gameweek) -- the snapshot in `predictions/` written before the deadline by
+`fpl-starts-logistic-predict`. It is only read, never written or replaced,
+and there are no source or gameweek options. (`fpl_starts.pstart` can also
+apply the frozen model live to current inputs; the app doesn't use it.)
 
 Each prediction carries its explanation: every feature's raw value,
 coefficient and log-odds contribution. A missing model, missing inputs or a

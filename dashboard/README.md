@@ -1,14 +1,14 @@
-# P(starts) dashboard
+# Who's likely to start? -- the dashboard
 
-Streamlit dashboard + LangGraph agent for the frozen logistic P(start)
-model, `logistic_availability_v1`, read-only against this repo's
-`predictions/`, `models/`, `db/derived.db` and the public FPL API. Lives inside `fpl-starts` (the public
-repo) as its own nested `pyproject.toml`/venv, separate from the parent
-package's own -- not because of a Python-version conflict (both `fpl` and
-`fpl-starts` moved to 3.12+ on 2026-09-15, specifically so this dashboard
-didn't need a separate floor), but because a Streamlit/LangGraph app has
-no business sharing a dependency set with the modelling pipeline it reads.
-`fpl_starts` is consumed as a normal editable dependency (`path = ".."`).
+A Streamlit app and LangGraph chat agent for the frozen logistic P(start)
+model, `logistic_availability_v1`. A manager enters their FPL team ID, tells
+the app about any transfers since the last gameweek, and sees each player's
+chance of starting -- with why -- and can ask a chat agent about their squad.
+
+It lives inside `fpl-starts` as its own nested `pyproject.toml`/venv:
+a Streamlit/LangGraph app has no business sharing a dependency set with the
+modelling pipeline it reads. `fpl_starts` is consumed as a normal editable
+dependency (`path = ".."`).
 
 ## Setup
 
@@ -17,117 +17,177 @@ uv sync
 uv run streamlit run app.py
 ```
 
-The chat needs `ANTHROPIC_API_KEY` (and, only if your key isn't
-scoped to a single workspace, `ANTHROPIC_WORKSPACE_ID` -- confirmed live:
-an unscoped key 400s on every request without it). `agent.py` loads both
-via `python-dotenv` automatically from a `.env` file in this directory,
-or in the `fpl-starts` root (first one that sets a variable wins) -- put
-one there yourself, it isn't provided. Deliberately doesn't look outside
-this repo (a sibling private repo's `.env`, say) -- none of this is
-required if the variables are already in your shell environment (`ant
-auth login` also works, with no env var at all). `.env` files here are
-gitignored.
+The chat needs `ANTHROPIC_API_KEY` (and, only if your key isn't scoped to a
+single workspace, `ANTHROPIC_WORKSPACE_ID` -- an unscoped key is rejected
+without it). `agent.py` loads both via `python-dotenv` from a `.env` file in
+this directory or the `fpl-starts` root (first one that sets a variable
+wins); it never looks outside this repo. None of this is needed if the
+variables are already in your environment. `.env` files are gitignored.
 
 `data.py` resolves `models/`, `predictions/`, `data/`, `raw/` and
 `db/derived.db` from the repo root, whatever the working directory;
 `FPL_DASHBOARD_FPL_STARTS_DB` overrides the database path. Nothing outside
 this repo is read.
 
-## Where P(start) comes from
-
-Everything goes through `fpl_starts.pstart` -- the dashboard never builds
-features or applies coefficients itself:
-
-The app shows one thing: the latest registered `logistic_availability_v1`
-forecast for the upcoming gameweek (the one after the last completed
-gameweek) -- the snapshot in `predictions/` written before the deadline by
-`fpl-starts-logistic-predict`. It is only read, never written or replaced,
-and there are no source or gameweek options. (`fpl_starts.pstart` can also
-apply the frozen model live to current inputs; the app doesn't use it.)
-
-Each prediction is explained against a nailed-on starter (available,
-played 60+ minutes last gameweek and all of the 3 before, started every game
-this season and last -- 96% in the frozen model), by `fpl_starts.explanation`,
-in three groups of inputs that belong together: **availability**, **playing
-time at his club** (last gameweek, the 3 before, start rate this season,
-first game at his club) and **last season**. Each group shows the facts
-behind it, how much it's holding him back, and his chance if that group were
-like a nailed-on starter's -- always a real, consistent player, never one
-input changed on its own. The groups add up exactly to the prediction. In
-gameweeks 1-4, when "last gameweek" still reaches into last season, the two
-playing-time groups are shown as one. A missing model, missing inputs or a
-gameweek with no prediction is an error on screen; there is no fallback to
-any other model.
-
-## Keeping the data fresh
-
-"Check for latest FPL news" (and the chat's refresh tool) runs
-`fpl_starts.refresh`: fetch FPL's latest availability once, archive it, rebuild
-`derived.db` atomically and, if a player's chance of starting changed,
-register a new forecast -- for everyone using the app. Only before the
-upcoming gameweek's deadline, and at most every 30 minutes. It writes to
-`raw/`, `db/` and `predictions/`, so the app needs a writable disk.
+After changing anything other than `app.py`, restart the app -- Streamlit
+re-runs `app.py` on every interaction but keeps imported modules loaded.
 
 ## Your squad first
 
 The app opens by asking for your FPL team ID, checks it exists (FPL's
 `entry/{id}/`), and loads your official squad as it stood at the end of the
-last completed gameweek (`entry/{id}/event/{gw}/picks/`). Those two calls,
-once per session, are the only live FPL API requests: the player list
-(names, clubs, positions) and the last completed gameweek come from
-`db/derived.db`, built from the archive. It then asks what you've changed since -- "No
-changes", "João Pedro out for Calvert-Lewin", "sold A and B and bought C and
-D" -- and resolves each named player to a stable FPL player code (accents and
-punctuation don't matter; an unknown or ambiguous name, an outgoing player
-not in the squad or an incoming one already in it is refused with nothing
-changed). Every prediction view, the player drill-down and the chat agent
-then use that current squad: official squad + your transfers. The official
-squad itself is never changed; "Change team" clears everything for the
-team.
+last completed gameweek (`entry/{id}/event/{gw}/picks/`, which also gives
+your bank). Those two calls, once per session, are the only per-user FPL
+API requests: the player list (names, clubs, positions), prices, news and
+the last completed gameweek come from `db/derived.db`, built from the
+archive.
+
+It then asks what you've changed since -- "No changes", "João Pedro out for
+Calvert-Lewin", "sold A and B and bought C and D" -- and resolves each named
+player to a stable FPL player code (accents and punctuation don't matter; an
+unknown or ambiguous name, an outgoing player not in the squad or an
+incoming one already in it is refused with nothing changed). Everything
+after that -- the predictions, the player drill-down and the chat -- uses
+that current squad: official squad + your transfers. The official squad
+itself is never changed; "Change team" clears everything for the team.
+
+## Where the chance of starting comes from
+
+Everything goes through `fpl_starts.pstart` -- the dashboard never builds
+features or applies coefficients itself. The app shows the latest registered
+`logistic_availability_v1` forecast for the upcoming gameweek: the snapshot
+in `predictions/` written by `fpl-starts-logistic-predict` or
+`fpl-starts-refresh`. There are no source or gameweek options.
+
+Each prediction is explained against a regular starter (available, played
+60+ minutes last gameweek and all of the 3 before, started every game this
+season and last -- 96% in the frozen model), by `fpl_starts.explanation`,
+in three groups of inputs that belong together: **availability**, **playing
+time at his club** (last gameweek, the 3 before, start rate this season,
+first game at his club) and **last season**. Each group shows the facts
+behind it, how much it's holding him back, and his chance without that
+issue -- always a real, consistent player, never one input changed on its
+own. The groups add up exactly to the prediction. In gameweeks 1-4, when
+"last gameweek" still reaches into last season, the two playing-time groups
+are shown as one.
+
+## How the chat works
+
+The chat is a LangGraph ReAct agent (`create_react_agent`, `claude-opus-5`).
+Its graph is a loop: the **agent** node (Claude) either answers or asks for
+a tool; the **tools** node runs it and hands the result back; repeat until
+Claude answers. Claude never calculates a number itself -- every number in
+an answer comes from a tool, and every tool answer says when our FPL data
+is from.
+
+One question, end to end:
+
+```mermaid
+sequenceDiagram
+    actor M as Manager
+    participant App as app.py
+    participant G as LangGraph agent
+    participant C as Claude (agent node)
+    participant T as tools node
+    participant Tools as tools.py
+    M->>App: "Who's at risk in my squad?"
+    App->>App: tools_context() - snapshot of the session and cached data
+    App->>G: invoke(question)
+    G->>C: question + tool descriptions
+    C-->>G: call squad_risks()
+    G->>T: run squad_risks (in a worker thread)
+    T->>Tools: squad_risks(snapshot)
+    Tools-->>T: "Starting XI risks ... FPL data as of ..."
+    T-->>G: tool result
+    G->>C: tool result
+    C-->>G: final answer, using only the tool's numbers
+    G-->>App: answer
+    App->>App: keep_tool_writes() - copy a stated bank or reloaded forecast back
+    App-->>M: answer (the page redraws if a refresh changed the data)
+```
+
+LangGraph runs tool calls in worker threads, where Streamlit's session state
+and caches aren't available. So before each question `app.py` builds a
+snapshot of the session and the cached data on its own thread, the tools
+only ever touch that snapshot, and anything they change is copied back
+afterwards.
+
+The tools (`tools.py`, wrapped for LangGraph in `agent.py`):
+
+| Tool | Answers | Built on |
+|---|---|---|
+| `get_my_current_squad_predictions` | "How's my team looking?" | forecast + explanation for the current squad |
+| `explain_player` | "Why is Palmer only 80%?" -- any player | forecast, explanation, price and FPL news |
+| `squad_risks` | "Who's at risk?" -- starters under 75%, and bench swaps that keep a legal formation | forecast + FPL's formation rules |
+| `find_replacements` | "Who could replace Greaves for £5m?" | forecast, prices, bank (an estimate unless the user gives theirs), 3-per-club limit |
+| `player_news` | "Is Saka fit?" -- and whether his status changed since the forecast | FPL news in derived.db vs the forecast's inputs |
+| `refresh_fpl_data` | "Is this up to date?" | `fpl_starts.refresh` (below) |
+| `get_gameweek_report` | "How did the model do in GW5?" | `fpl_starts.scoring` |
+
+The agent only speaks to chance of starting: it has no model of points,
+fixtures' difficulty or value, so it declines "who should I captain?" and
+says so. The chat doesn't remember earlier questions yet.
+
+## Keeping the data fresh
+
+"Check for latest FPL news" and the chat's refresh tool run
+`fpl_starts.refresh` -- for everyone using the app, not just the person who
+asked:
+
+```mermaid
+flowchart TD
+    Q["'Check for latest FPL news', or the chat: 'is this up to date?'"] --> D{"Before the upcoming<br/>gameweek's deadline?"}
+    D -- no --> X["The forecast is final:<br/>nothing is fetched"]
+    D -- yes --> C{"Refreshed in the<br/>last 30 minutes?"}
+    C -- yes --> R["Keep the current data"]
+    C -- no --> F["Fetch FPL bootstrap-static<br/>(one API call)"]
+    F --> A["Archive it write-once in raw/"]
+    A --> B["Rebuild derived.db atomically"]
+    B --> P["Re-run the frozen model<br/>for the upcoming gameweek"]
+    P --> CH{"Any player's chance<br/>of starting changed?"}
+    CH -- yes --> N["Register a new forecast in predictions/<br/>and rebuild again"]
+    CH -- no --> K["Keep the existing forecast"]
+```
+
+One refresh runs at a time (a lock file beside the database). Forecasts use
+availability captured up to the deadline. Because it writes to `raw/`, `db/`
+and `predictions/`, the app needs a writable disk.
 
 ## What's here
 
-- **`data.py`** -- all reads: P(start) via `fpl_starts.pstart`, the player
-  list and last completed gameweek from `db/derived.db`, scoring via
-  `fpl_starts.scoring` (never a write), and the public, unauthenticated FPL
-  manager-team API (`entry/{id}/`, `entry/{id}/event/{gw}/picks/`).
-- **`agent.py`** -- the LangGraph agent (`claude-opus-5`). In the app its
-  tools work on the user's session: their current squad, **explain any
-  player**, **squad risks** (starters unlikely to start, and bench swaps that
-  keep a legal formation), **replacements** likely to start by position and
-  budget (the bank is an estimate unless the user gives theirs; 3-per-club
-  limit), **FPL news** (and whether it changed since the forecast),
-  **refresh**, and past gameweek scores. Every answer states when our FPL
-  data is from. The model never estimates a number itself, and declines
-  points/captaincy questions -- it only knows who's likely to start. `uv run
-  python agent.py "your question"` for a quick CLI check outside Streamlit.
-- **`tools.py`** -- those tools, framework-agnostic, as plain functions over
-  the session and derived.db.
+- **`app.py`** -- the onboarding steps, then the current squad's page:
+  predictions across the full width (chance of starting, availability,
+  last-GW role, start rates, and a per-player breakdown of what's holding him
+  back), then the chat below them, with its input pinned to the bottom of
+  the window so it's always in view.
 - **`squad.py`** -- the onboarding state machine (`NO_TEAM` ->
   `TEAM_ID_VALID` -> `OFFICIAL_SQUAD_LOADED` -> `TRANSFER_STATE_CONFIRMED` ->
-  `CURRENT_SQUAD_READY`), transfer parsing and player-name resolution, and
-  selecting the current squad's rows from `fpl_starts.pstart` output.
+  `CURRENT_SQUAD_READY`), transfer parsing and player-name resolution.
   Framework-agnostic: it works on any mapping, `st.session_state` or a dict.
-- **`app.py`** -- the onboarding steps, then the current squad's page:
-  predictions (chance of starting, availability, last-GW role,
-  start rates, and a per-player breakdown of what's holding him back
-  compared with a regular starter) across the full width, then the chat
-  below them, with its input pinned to the bottom of the window so it's
-  always in view.
+- **`tools.py`** -- the chat's tools, as plain functions over a snapshot of
+  the session and the data.
+- **`agent.py`** -- the LangGraph agent and its system prompt; wraps the
+  tools for the app. `uv run python agent.py "your question"` for a quick
+  check outside Streamlit.
+- **`data.py`** -- all data access: the forecast via `fpl_starts.pstart`,
+  players, prices, news and the last completed gameweek from
+  `db/derived.db`, scoring via `fpl_starts.scoring`, the refresh via
+  `fpl_starts.refresh`, and the two FPL manager-team API calls.
 
 ## What this doesn't do (yet)
 
-Read-only and explanatory only -- can't trigger the archive/derive/predict
-pipeline, can't register a prediction, can't write anything back to
-`derived.db` or `predictions/`. That was a deliberate scope decision (see the conversation
-that produced this), not a missing feature; revisit if the read-only
-agent proves useful and an operator-console tier is actually wanted.
+- No points, captaincy or transfer-value advice -- only who's likely to start.
+- No exact transfer budget: FPL doesn't publish selling prices, so the bank
+  after transfers is an estimate unless the user gives theirs.
+- No chat memory between questions.
 
 ## Tests
 
-The P(start) service, `data.py` and the squad logic in `squad.py` are
-covered by the root suite (`tests/test_pstart.py`,
-`tests/test_dashboard_squad.py`; `uv run pytest` from the repo root) on
-synthetic inputs -- no Streamlit needed. The onboarding flow through the real
-app is covered by Streamlit AppTests with a faked FPL API
-(`dashboard/tests/`; `uv run pytest` from this directory).
+The root suite (`uv run pytest` from the repo root) covers the P(start)
+service, `data.py`, the squad logic, every chat tool and the refresh end to
+end on synthetic inputs -- no Streamlit, network or API key
+(`tests/test_pstart.py`, `test_dashboard_squad.py`, `test_dashboard_tools.py`,
+`test_refresh.py`). The app itself is covered by Streamlit AppTests
+(`dashboard/tests/`; `uv run pytest` from this directory), including real
+tool calls run through LangGraph by a scripted chat model, so no API calls
+are made.

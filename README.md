@@ -56,6 +56,15 @@ behind it.
   preprocessing, walk-forward evaluation, train-once, and prediction
   snapshots with per-feature contributions.
 - **`research/`** -- the aggregate analyses behind the case-study notebook.
+- **`pstart.py`** -- the application-facing API: the latest registered
+  forecast (or the frozen model applied live), with player names and each
+  prediction's explanation. Fails clearly; never falls back to another model.
+- **`explanation.py`** -- explains a prediction against a regular starter,
+  in groups of inputs that belong together (availability, playing time at
+  his club, last season), each with his chance without that issue.
+- **`refresh.py`** -- on-request refresh: before the upcoming gameweek's
+  deadline, archive FPL's latest availability, rebuild, and register a new
+  forecast if any chance of starting changed.
 - **`history.py`** -- start history across seasons (community archive +
   this project's own archive) and the write-once prediction-snapshot writer.
 - **`scoring.py`** -- the calibration harness: Brier score and accuracy,
@@ -67,12 +76,6 @@ behind it.
   postdates its round's deadline out of the season directory, so a same-day
   rerun can never be mistaken for the real pre-deadline prediction.
 
-## What's deliberately not here
-
-News evidence (scraped team news, the adaptive search agent, and the news
-adjustment of a base P(start)) and the full decision system built on top
-of it live in a separate, private repository that consumes this package.
-This repository is the statistical model and its evaluation.
 
 ## Running it
 
@@ -144,14 +147,40 @@ The dashboard tests need Streamlit, so they run separately in the
 dashboard's own environment; the root `uv run pytest` collects `tests/`
 only. Both use synthetic inputs -- no network, API key or local data.
 
-## Dashboard
+## Dashboard and chat agent
 
-`dashboard/` -- a Streamlit dashboard + LangGraph agent for
-`logistic_availability_v1`, read-only against this repo's registered
-predictions, frozen model, `derived.db` and the public FPL API: per-player
-P(start) with its explanation (the latest registered forecast, via
-`fpl_starts.pstart`) for your current
-squad -- your FPL team ID, validated, then the official squad from the last
-completed gameweek plus the transfers you describe -- and a chat interface
-that explains it. Its own nested Python project (separate `pyproject.toml`/venv --
-see `dashboard/README.md`).
+`dashboard/` is a Streamlit app for FPL managers: enter your team ID, tell it
+about any transfers since the last gameweek, and see each player's chance of
+starting with the reason behind it -- then ask a chat agent about your
+squad. The chat is a LangGraph agent whose answers come only from tools
+over the frozen model's forecasts and this repo's data:
+
+```mermaid
+flowchart LR
+    M(["Manager: 'Who's at risk in my squad?'"]) --> APP["Streamlit app"]
+    APP --> AGENT
+    subgraph AGENT["LangGraph agent"]
+        direction TB
+        S(("start")) --> A["agent node<br/>Claude: answer, or call a tool?"]
+        A -->|tool call| T["tools node<br/>runs the tool"]
+        T -->|result| A
+        A -->|answer| E(("end"))
+    end
+    T --> TOOLS["Chat tools<br/>squad risks, explain a player,<br/>replacements, FPL news, refresh"]
+    TOOLS --> FC[("Registered forecast<br/>and frozen model")]
+    TOOLS --> DB[("derived.db<br/>players, prices, news")]
+    TOOLS -.->|refresh, before the deadline| API["FPL API"]
+    E --> APP
+```
+
+Claude never calculates a number itself, every answer says when the FPL data
+is from, and the agent declines points and captaincy questions -- it only
+knows who's likely to start. See [`dashboard/README.md`](dashboard/README.md)
+for how a question flows through the graph, the tools, and the refresh. It's
+its own nested Python project (separate `pyproject.toml`/venv):
+
+```
+cd dashboard
+uv sync
+uv run streamlit run app.py
+```

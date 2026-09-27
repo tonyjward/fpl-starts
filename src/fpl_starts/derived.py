@@ -5,6 +5,12 @@ disposable and rebuilt freely, never written to directly or updated
 incrementally. If a parsing bug is found here, delete the database and
 rebuild -- the raw archive is unaffected and is the only thing that must
 never be touched.
+
+Archive files are located through `archiver.entry_file`, so a rebuild works
+from any working directory, whatever `base_dir` the archive was written
+with. `rebuild_and_swap` (used by this package's CLI) rebuilds into a new
+file and atomically replaces the database, so a running reader never sees a
+half-built one.
 """
 
 import csv
@@ -15,6 +21,7 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 import unicodedata
 from datetime import datetime
 
@@ -209,7 +216,7 @@ def latest_bootstrap_payload(base_dir, season):
     latest = latest_by(entries, lambda e: e["fetched_at"])
     if latest is None:
         return None
-    return read_gz_json(latest["path"])
+    return read_gz_json(archiver.entry_file(base_dir, latest))
 
 
 def _load_teams(conn, base_dir, season):
@@ -313,7 +320,7 @@ def _load_fixtures(conn, base_dir, season):
     latest = latest_by(entries, lambda e: e["fetched_at"])
     if latest is None:
         return
-    fixtures_payload = read_gz_json(latest["path"])
+    fixtures_payload = read_gz_json(archiver.entry_file(base_dir, latest))
 
     rows = []
     for fixture in fixtures_payload or []:
@@ -345,7 +352,7 @@ def _team_code_history(base_dir, season):
     entries = ok_entries(base_dir, season, "bootstrap-static")
     history = {}
     for entry in entries:
-        payload = read_gz_json(entry["path"])
+        payload = read_gz_json(archiver.entry_file(base_dir, entry))
         team_id_to_code = {
             team["id"]: team["code"] for team in payload.get("teams") or []
         }
@@ -386,7 +393,7 @@ def _load_gameweek_stats(conn, base_dir, season, id_to_code, team_code_history):
 
     for entry in latest_per_round(entries).values():
         gw = entry["current_gw"]
-        payload = read_gz_json(entry["path"])
+        payload = read_gz_json(archiver.entry_file(base_dir, entry))
         rows = []
         for element in payload.get("elements") or []:
             code = id_to_code.get(element["id"])
@@ -433,7 +440,7 @@ def _load_availability_snapshots(conn, base_dir, season):
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     for entry in entries:
-        payload = read_gz_json(entry["path"])
+        payload = read_gz_json(archiver.entry_file(base_dir, entry))
         team_id_to_code = {
             team["id"]: team["code"] for team in payload.get("teams") or []
         }
@@ -602,6 +609,34 @@ def rebuild(base_dir=archiver.RAW_DIR, db_path=DERIVED_DB_PATH, seasons=None,
     return seasons
 
 
+def rebuild_and_swap(base_dir=archiver.RAW_DIR, db_path=DERIVED_DB_PATH, seasons=None,
+                     predictions_dir=PREDICTIONS_DIR):
+    """`rebuild` into a fresh file beside `db_path`, then atomically replace
+    `db_path` with it (os.replace). A reader with the old database open keeps
+    reading the old file until it closes; new connections see the new one;
+    nobody ever sees a half-built database. If the rebuild fails, `db_path`
+    is left exactly as it was.
+
+    Replaces the whole file, so only for a derived.db holding nothing but
+    the base tables -- like this repo's own. A consuming repo that adds its
+    own extension tables to the same file must keep using `rebuild`.
+    """
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=os.path.basename(db_path) + ".", suffix=".rebuild", dir=db_dir or ".")
+    os.close(fd)
+    os.remove(tmp_path)  # rebuild creates the file itself
+    try:
+        seasons = rebuild(base_dir=base_dir, db_path=tmp_path, seasons=seasons,
+                          predictions_dir=predictions_dir)
+        os.replace(tmp_path, db_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+    return seasons
+
+
 def _main():
     import argparse
 
@@ -616,8 +651,8 @@ def _main():
     # Paths are resolved relative to the current working directory -- see
     # archiver.py's _main() for why this package no longer chdirs based on
     # its own installed location.
-    seasons = rebuild(base_dir=args.base_dir, db_path=args.db_path,
-                       predictions_dir=args.predictions_dir)
+    seasons = rebuild_and_swap(base_dir=args.base_dir, db_path=args.db_path,
+                               predictions_dir=args.predictions_dir)
     print("rebuilt {0} from {1}: {2}".format(
         args.db_path, args.base_dir, ", ".join(seasons) or "(no seasons found)"
     ))

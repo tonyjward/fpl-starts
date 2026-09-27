@@ -88,17 +88,7 @@ def load_gameweek_predictions(season, target_round, source=SOURCE_REGISTERED, mo
     if source == SOURCE_LIVE:
         if model is None:
             model = load_frozen_model()
-        try:
-            return pstart.predict_logistic_p_start(model, season, target_round, FPL_STARTS_DB_PATH, DATA_DIR,
-                                                   RAW_DIR)
-        except pstart.InputDataUnavailable as exc:
-            if os.path.abspath(os.getcwd()) == REPO_ROOT:
-                raise
-            # The raw archive's manifest records file paths relative to the
-            # repo root, so live mode must run from there.
-            raise pstart.InputDataUnavailable("{0} -- live predictions read the raw archive, whose manifest "
-                                              "paths are relative to the repo root: start Streamlit from {1}"
-                                              .format(exc, REPO_ROOT)) from exc
+        return pstart.predict_logistic_p_start(model, season, target_round, FPL_STARTS_DB_PATH, DATA_DIR, RAW_DIR)
     raise ValueError("unknown P(start) source: {0!r}".format(source))
 
 

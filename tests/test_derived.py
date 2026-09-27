@@ -650,3 +650,101 @@ def test_derive_cli_explicit_paths_win_over_defaults(tmp_path, monkeypatch):
 
     assert os.path.isfile(db_path)
     assert not (tmp_path / "db").exists()
+
+
+# --- archive files from any working directory; atomic rebuild ------------------------------
+
+def _respell_manifest_paths(base_dir, prefix):
+    """Rewrite every manifest path as if the archiver had been run with a
+    different `base_dir` spelling (e.g. "raw" from another working
+    directory), so the stored paths no longer resolve from here."""
+    path = archiver.manifest_path(base_dir, SEASON)
+    lines = [json.loads(line) for line in open(path) if line.strip()]
+    for entry in lines:
+        if entry.get("path"):
+            entry["path"] = os.path.join(prefix, *os.path.normpath(entry["path"]).split(os.sep)[-4:])
+    with open(path, "w") as f:
+        f.writelines(json.dumps(entry) + "\n" for entry in lines)
+
+
+def _all_rows(db_path):
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = [t for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
+        return {t: sorted(conn.execute("SELECT * FROM {0}".format(t)).fetchall(), key=repr) for t in tables}
+    finally:
+        conn.close()
+
+
+def test_entry_file_resolves_paths_written_from_another_directory(tmp_path):
+    base_dir = str(tmp_path / "raw")
+    seed_consistent_archive(base_dir)
+    original = [dict(e) for e in derived.ok_entries(base_dir, SEASON, "event-live")]
+    _respell_manifest_paths(base_dir, os.path.join("somewhere", "else", "raw"))
+    for before, after in zip(original, derived.ok_entries(base_dir, SEASON, "event-live")):
+        assert not os.path.exists(after["path"])  # the stored spelling doesn't resolve from here
+        assert archiver.entry_file(base_dir, after) == os.path.join(
+            base_dir, *os.path.normpath(before["path"]).split(os.sep)[-4:])
+        assert os.path.exists(archiver.entry_file(base_dir, after))
+
+
+def test_entry_file_falls_back_to_the_stored_path(tmp_path):
+    entry = {"path": str(tmp_path / "not-an-archive-layout.json.gz")}
+    assert archiver.entry_file(str(tmp_path / "raw"), entry) == entry["path"]
+
+
+def test_rebuild_works_whatever_directory_the_archive_was_written_from(tmp_path):
+    base_dir = str(tmp_path / "raw")
+    seed_consistent_archive(base_dir)
+    expected = str(tmp_path / "expected.db")
+    derived.rebuild(base_dir=base_dir, db_path=expected, predictions_dir=str(tmp_path / "predictions"))
+
+    _respell_manifest_paths(base_dir, os.path.join("somewhere", "else", "raw"))
+    respelled = str(tmp_path / "respelled.db")
+    derived.rebuild(base_dir=base_dir, db_path=respelled, predictions_dir=str(tmp_path / "predictions"))
+    assert _all_rows(respelled) == _all_rows(expected)
+    archiver.verify_archive(base_dir, SEASON)  # still a consistent archive
+
+
+def test_rebuild_and_swap_matches_rebuild_and_replaces_atomically(tmp_path):
+    base_dir = str(tmp_path / "raw")
+    seed_consistent_archive(base_dir)
+    predictions_dir = str(tmp_path / "predictions")
+    expected = str(tmp_path / "expected.db")
+    derived.rebuild(base_dir=base_dir, db_path=expected, predictions_dir=predictions_dir)
+
+    db_path = str(tmp_path / "db" / "derived.db")
+    derived.rebuild_and_swap(base_dir=base_dir, db_path=db_path, predictions_dir=predictions_dir)
+    assert _all_rows(db_path) == _all_rows(expected)
+
+    reader = sqlite3.connect(db_path)  # a reader holding the old database open
+    reader.execute("BEGIN")
+    before = reader.execute("SELECT COUNT(*) FROM players").fetchone()[0]
+    write_ok_entry(base_dir, SEASON, "bootstrap-static", 3, datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc), {
+        "teams": make_teams((1, 3)),
+        "elements": [make_player(1001, 1, "Alice", minutes=180, starts=2),
+                     make_player(1002, 2, "Bob", minutes=90, starts=1),
+                     make_player(1003, 3, "Carol", minutes=0, starts=0)],
+    })
+    derived.rebuild_and_swap(base_dir=base_dir, db_path=db_path, predictions_dir=predictions_dir)
+    assert reader.execute("SELECT COUNT(*) FROM players").fetchone()[0] == before == 2
+    reader.close()
+    assert sqlite3.connect(db_path).execute("SELECT COUNT(*) FROM players").fetchone()[0] == 3
+    assert os.listdir(os.path.dirname(db_path)) == ["derived.db"]  # no temporary files left
+
+
+def test_failed_rebuild_and_swap_leaves_the_database_untouched(tmp_path, monkeypatch):
+    base_dir = str(tmp_path / "raw")
+    seed_consistent_archive(base_dir)
+    db_path = str(tmp_path / "derived.db")
+    derived.rebuild_and_swap(base_dir=base_dir, db_path=db_path, predictions_dir=str(tmp_path / "predictions"))
+    before = _all_rows(db_path)
+
+    def broken(**kwargs):
+        sqlite3.connect(kwargs["db_path"]).close()  # a half-written file
+        raise ValueError("season totals don't match")
+    monkeypatch.setattr(derived, "rebuild", broken)
+    with pytest.raises(ValueError, match="season totals"):
+        derived.rebuild_and_swap(base_dir=base_dir, db_path=db_path, predictions_dir=str(tmp_path / "predictions"))
+    assert _all_rows(db_path) == before
+    assert sorted(os.listdir(tmp_path)) == ["derived.db", "raw"]

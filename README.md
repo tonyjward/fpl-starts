@@ -3,17 +3,21 @@
 **A chat-based decision platform for Fantasy Premier League, grounded in an
 interpretable statistical model.**
 
-Ask it about your squad in plain English -- *"Who's at risk this week?"*,
-*"Is Palmer fit?"*, *"Who could replace Greaves for £5m?"* -- and every
-answer is built from a frozen, prospectively evaluated model of whether each
-player will start, with the reasoning behind every number. The language
-model phrases the answer; it never supplies the numbers.
+Fantasy Premier League has over 11 million users, or "managers". Each week
+every manager must decide which transfers to make and which 11 of their 15
+players to start. Only players who take to the field can score points, so
+knowing who is likely to start helps managers make better decisions.
 
-Fantasy Premier League has over 11 million players. Each week every one of
-them decides which transfers to make and which 11 of their 15 players to
-start. Having a reliable estimate of a player's chance of playing can
-improve decision making - players that don't start and don't come on 
-as a sub will score no points.
+This repo provides a chat-based interface that lets managers ask questions
+such as:
+
+* For each player in my squad, what's his chance of starting?
+* Why is João Pedro only 38%?
+* Who could replace him?
+
+The answers are grounded in a statistical model trained on several seasons
+of player and availability data, rather than letting the LLM generate an
+answer from its training data.
 
 ## How it works
 
@@ -34,21 +38,23 @@ Three layers, each only trusting the one below it:
    says plainly what the model can't answer (points, captaincy).
 
 ```mermaid
-flowchart LR
-    M(["Manager: 'Who's at risk in my squad?'"]) --> APP["Streamlit app"]
-    APP --> AGENT
-    subgraph AGENT["LangGraph agent"]
-        direction TB
-        S(("start")) --> A["agent node<br/>Claude: answer, or call a tool?"]
-        A -->|tool call| T["tools node<br/>runs the tool"]
-        T -->|result| A
-        A -->|answer| E(("end"))
+flowchart BT
+    DATA[("<b>FPL data</b><br/>injury and availability flags, news,<br/>minutes and starts each gameweek,<br/>prices, clubs and positions<br/>archived, refreshed up to each deadline")]
+    FC[("<b>Chance of starting forecast</b><br/>logistic regression model")]
+    subgraph TOOLS["Chat tools"]
+        T1["Squad risks"]
+        T2["Explain a player"]
+        T3["Replacements"]
+        T4["FPL news"]
+        T5["Refresh"]
     end
-    T --> TOOLS["Chat tools<br/>squad risks, explain a player,<br/>replacements, FPL news, refresh"]
-    TOOLS --> FC[("Registered forecast<br/>and frozen model")]
-    TOOLS --> DB[("derived.db<br/>players, prices, news")]
-    TOOLS -.->|refresh, before the deadline| API["FPL API"]
-    E --> APP
+    D["<b>LangGraph chat agent</b><br/>answers only through its tools"]
+    M(["Manager: 'Who's at risk this week?'"])
+    DATA -->|inputs| FC
+    FC --> TOOLS
+    DATA --> TOOLS
+    TOOLS --> D
+    D <-->|question and answer| M
 ```
 
 > **Modelling case study:** see

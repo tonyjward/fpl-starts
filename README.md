@@ -1,24 +1,70 @@
 # fpl-starts
 
-An interpretable, leakage-safe P(start) modelling project for Fantasy
-Premier League, with historical evaluation, calibration, prospective
-scoring and explanation-ready predictions.
+**A chat-based decision platform for Fantasy Premier League, grounded in an
+interpretable statistical model.**
 
-Fantasy Premier League has over 11 million players. Each week every one of
-them decides which transfers to make and which 11 of their 15 players to
-start, and almost every one of those decisions turns on whether a player
-will actually start. FPL's own `chance_of_playing_next_round` (25/50/75/100)
-only says whether a player *can* be picked; it says nothing about rotation,
-form or a manager's preferences. This project estimates the probability
-that each player starts his club's next match, and stores the reasoning
-behind every number.
+Fantasy Premier League has over 11 million users, or "managers". Each week
+every manager must decide which transfers to make and which 11 of their 15
+players to start. Only players who take to the field can score points, so
+knowing who is likely to start helps managers make better decisions.
+
+This repo provides a chat-based interface that lets managers ask questions
+such as:
+
+* For each player in my squad, what's his chance of starting?
+* Why is João Pedro only 38%?
+* Who could replace him?
+
+The answers are grounded in a statistical model trained on several seasons
+of player and availability data, rather than letting the LLM generate an
+answer from its training data.
+
+## How it works
+
+Three layers, each only trusting the one below it:
+
+1. **A statistical model.** An interpretable logistic regression estimates
+   each player's chance of starting his club's next match. It's leakage-safe,
+   frozen before the season and scored prospectively, and every prediction
+   decomposes exactly into its reasons -- explained against a regular
+   starter, in groups of inputs that belong together.
+2. **Reproducible data.** A write-once archive of the FPL API, rebuilt into a
+   SQLite layer and refreshed on request up to each gameweek's deadline; every
+   refresh can register a new forecast, and every forecast is kept.
+3. **A decision layer.** A Streamlit app and a LangGraph chat agent that know
+   your actual squad (team ID plus the transfers you describe). The agent
+   answers through tools over the model and data -- squad risks with legal
+   bench swaps, replacements within your budget, FPL news, refreshes -- and
+   says plainly what the model can't answer (points, captaincy).
+
+```mermaid
+flowchart BT
+    DATA[("<b>FPL data</b><br/>injury and availability flags, news,<br/>minutes and starts each gameweek,<br/>prices, clubs and positions<br/>archived, refreshed up to each deadline")]
+    FC[("<b>Chance of starting forecast</b><br/>logistic regression model")]
+    subgraph TOOLS["Chat tools"]
+        T1["Squad risks"]
+        T2["Explain a player"]
+        T3["Replacements"]
+        T4["FPL news"]
+        T5["Refresh"]
+    end
+    D["<b>LangGraph chat agent</b><br/>answers only through its tools"]
+    M(["Manager: 'Who's at risk this week?'"])
+    DATA -->|inputs| FC
+    FC --> TOOLS
+    DATA --> TOOLS
+    TOOLS --> D
+    D <-->|question and answer| M
+```
 
 > **Modelling case study:** see
 > [`notebooks/logistic_p_start_model.ipynb`](notebooks/logistic_p_start_model.ipynb)
 > for the feature-selection, temporal-validation, calibration and
-> player-level explainability walkthrough.
+> player-level explainability walkthrough. For the chat agent -- how a
+> question flows through the graph, the tools and the refresh -- see
+> [`dashboard/README.md`](dashboard/README.md).
 
-## The model
+## The statistical model
 
 `src/fpl_starts/ml/` holds `logistic_availability`: a six-predictor logistic
 regression (FPL availability status, last gameweek's role, minutes in the
@@ -56,6 +102,15 @@ behind it.
   preprocessing, walk-forward evaluation, train-once, and prediction
   snapshots with per-feature contributions.
 - **`research/`** -- the aggregate analyses behind the case-study notebook.
+- **`pstart.py`** -- the application-facing API: the latest registered
+  forecast (or the frozen model applied live), with player names and each
+  prediction's explanation. Fails clearly; never falls back to another model.
+- **`explanation.py`** -- explains a prediction against a regular starter,
+  in groups of inputs that belong together (availability, playing time at
+  his club, last season), each with his chance without that issue.
+- **`refresh.py`** -- on-request refresh: before the upcoming gameweek's
+  deadline, archive FPL's latest availability, rebuild, and register a new
+  forecast if any chance of starting changed.
 - **`history.py`** -- start history across seasons (community archive +
   this project's own archive) and the write-once prediction-snapshot writer.
 - **`scoring.py`** -- the calibration harness: Brier score and accuracy,
@@ -67,12 +122,6 @@ behind it.
   postdates its round's deadline out of the season directory, so a same-day
   rerun can never be mistaken for the real pre-deadline prediction.
 
-## What's deliberately not here
-
-News evidence (scraped team news, the adaptive search agent, and the news
-adjustment of a base P(start)) and the full decision system built on top
-of it live in a separate, private repository that consumes this package.
-This repository is the statistical model and its evaluation.
 
 ## Running it
 
@@ -88,6 +137,18 @@ uv run fpl-starts-derive                                # rebuild the derived SQ
 uv run fpl-starts-logistic-predict --target-round N     # frozen-model forecast for gameweek N
 uv run fpl-starts-derive                                # rebuild again, to pick up predictions
 ```
+
+Or, for the upcoming gameweek in one step (also what the dashboard's
+"Check for latest FPL news" runs):
+
+```
+uv run fpl-starts-refresh      # latest FPL availability -> rebuild -> new forecast if any chance changed
+```
+
+It only runs before the upcoming gameweek's deadline, at most once every 30
+minutes (`--cooldown-minutes`), and registers a new forecast snapshot only
+when a player's chance of starting changed. Forecasts use availability
+captured up to the deadline.
 
 ### After the gameweek
 
@@ -132,14 +193,15 @@ The dashboard tests need Streamlit, so they run separately in the
 dashboard's own environment; the root `uv run pytest` collects `tests/`
 only. Both use synthetic inputs -- no network, API key or local data.
 
-## Dashboard
+## Dashboard and chat agent
 
-`dashboard/` -- a Streamlit dashboard + LangGraph agent for
-`logistic_availability_v1`, read-only against this repo's registered
-predictions, frozen model, `derived.db` and the public FPL API: per-player
-P(start) with its explanation (the latest registered forecast, via
-`fpl_starts.pstart`) for your current
-squad -- your FPL team ID, validated, then the official squad from the last
-completed gameweek plus the transfers you describe -- and a chat interface
-that explains it. Its own nested Python project (separate `pyproject.toml`/venv --
-see `dashboard/README.md`).
+`dashboard/` is the decision layer: the Streamlit app and LangGraph agent
+described above. It's its own nested Python project (separate
+`pyproject.toml`/venv); see [`dashboard/README.md`](dashboard/README.md) for
+the details.
+
+```
+cd dashboard
+uv sync
+uv run streamlit run app.py
+```

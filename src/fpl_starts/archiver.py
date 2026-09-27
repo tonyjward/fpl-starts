@@ -164,6 +164,27 @@ def manifest_path(base_dir, season):
     return os.path.join(base_dir, season, MANIFEST_FILENAME)
 
 
+def entry_file(base_dir, entry):
+    """Where a manifest entry's snapshot file is, seen from here.
+
+    An entry's stored `path` is spelled with whatever `base_dir` the archiver
+    was given -- often relative ("raw/2026-27/..."), so it only resolves from
+    the working directory the archiver ran in. A snapshot file always sits at
+    <season>/<endpoint>/gw<NN>/<file> under the archive, so that tail is
+    resolved under `base_dir` instead, which works from any working
+    directory. The stored path is returned unchanged when no file is there
+    (e.g. an entry written with another layout), so anything that resolved
+    before still does. The manifest itself is never rewritten.
+    """
+    stored = entry["path"]
+    parts = os.path.normpath(stored).split(os.sep)
+    if len(parts) >= 4:
+        candidate = os.path.join(base_dir, *parts[-4:])
+        if os.path.exists(candidate):
+            return candidate
+    return stored
+
+
 def append_manifest_entry(base_dir, season, entry):
     """Append one JSON line to the season's manifest. A single write() of one
     line terminated by "\\n", in append mode -- an interrupted write must not
@@ -463,7 +484,7 @@ def run_daily_archive(session, season=None, base_dir=RAW_DIR, clock=utcnow):
     )
     entries = [bootstrap_entry, fixtures_entry]
 
-    events = _read_events(bootstrap_entry["path"])
+    events = _read_events(entry_file(base_dir, bootstrap_entry))
     already_archived = _archived_event_live_gws(base_dir, resolved_season)
     for event in events:
         gw = event.get("id")
@@ -505,7 +526,7 @@ def verify_archive(base_dir, season):
                 entry = json.loads(line)
                 if entry.get("outcome") != "ok":
                     continue
-                file_path = entry["path"]
+                file_path = entry_file(base_dir, entry)
                 # abspath, not normpath: a manifest can (and, via the CLI's
                 # cwd-independent base_dir, sometimes does) mix relative and
                 # absolute path strings for the same file. Resolving both

@@ -34,10 +34,10 @@ def setup(world, tmp_path, monkeypatch):
     for r in (1, 2, 3, 4):
         for i, code in enumerate(CODES):
             add_current_gw(conn, code, r, 101 + i % 2, 90 if i < 3 else 0, i < 3)
-    cutoff5 = deadline(SEASON, 5) - pd.Timedelta(hours=spec.CUTOFF_HOURS_BEFORE_DEADLINE)
+    cutoff5 = deadline(SEASON, 5) - pd.Timedelta(hours=predict.FORECAST_CUTOFF_HOURS_BEFORE_DEADLINE)
     for i, code in enumerate(CODES):
         add_snapshot(conn, code, 5, cutoff5 - pd.Timedelta(hours=6), team_code=101 + i % 2)
-    add_snapshot(conn, 1000, 5, cutoff5 + pd.Timedelta(hours=1), status="i", chance=0)  # after cutoff
+    add_snapshot(conn, 1000, 5, cutoff5 + pd.Timedelta(hours=1), status="i", chance=0)  # after the deadline
     conn.commit()
 
     state = {"finished": 4}
@@ -76,6 +76,20 @@ def test_explanations_are_exact(setup):
 def test_post_cutoff_snapshot_is_ignored(setup):
     records, _, _, _ = _predict(setup, 5)
     assert {r["code"]: r["availability_status"] for r in records}[1000] == "available"
+
+
+def test_availability_up_to_the_deadline_is_used(setup):
+    """Forecasts use availability captured right up to the deadline -- later
+    than the 2h cutoff the model was fitted with -- but nothing after it."""
+    conn = setup["conn"]
+    dl = deadline(SEASON, 5)
+    add_snapshot(conn, 1002, 5, dl - pd.Timedelta(minutes=5), status="i", chance=0)  # late news
+    add_snapshot(conn, 1003, 5, dl, status="s", chance=0)  # at the deadline: too late
+    conn.commit()
+    records, _, cutoff, _ = _predict(setup, 5)
+    status = {r["code"]: r["availability_status"] for r in records}
+    assert status[1002] == "injured" and status[1003] == "available"
+    assert cutoff == dl
 
 
 def test_local_file_rounds_are_scored_from_pre_cutoff_files(setup):

@@ -19,6 +19,7 @@ fpl-starts-logistic-evaluate = "fpl_starts.ml.evaluate:_main"
 fpl-starts-logistic-train = "fpl_starts.ml.train:_main"
 fpl-starts-logistic-predict = "fpl_starts.ml.predict:_main"
 fpl-starts-logistic-case-study = "fpl_starts.research.logistic_case_study:_main"
+fpl-starts-refresh = "fpl_starts.refresh:_main"
 
 [build-system]
 requires = ["setuptools>=61"]

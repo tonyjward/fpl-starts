@@ -1,8 +1,9 @@
 """Score a prospective-season gameweek with the frozen logistic model.
 
 Never fits anything: it loads the frozen model.json and applies it. Features
-for gameweek N use only information available before N's prediction cutoff
-(deadline - 2h):
+for gameweek N use only information available before N's forecast cutoff --
+the deadline itself (FORECAST_CUTOFF_HOURS_BEFORE_DEADLINE), so availability
+captured right up to the deadline counts:
 
 - outcomes: this season's gameweeks strictly before N (all of which must be
   finished), plus the historical seasons;
@@ -34,6 +35,13 @@ from .. import archiver, config, derived
 from . import logistic, panel as mlpanel, spec
 from .data import MissingLocalDataError
 
+# Forecasts may use availability captured at any time strictly before the
+# gameweek's deadline. Only forecasting changed (2026-09-27): the model was
+# fitted, and spec.CUTOFF_HOURS_BEFORE_DEADLINE still defines, historical
+# availability as of deadline - 2h, and forecasts made before this change used
+# deadline - 2h too. Each snapshot records its own prediction_cutoff.
+FORECAST_CUTOFF_HOURS_BEFORE_DEADLINE = 0
+
 
 def _pool(conn, season, target_round, availability, history):
     """Players to score and their club for gameweek N: the club in the
@@ -63,7 +71,7 @@ def build_target_rows(conn, data_dir, raw_dir, season, target_round):
     unfinished = [r for r in range(1, target_round) if not events[r]["finished"]]
     if unfinished:
         raise ValueError("gameweek(s) {0} before GW{1} are not finished yet".format(unfinished, target_round))
-    cutoffs = mlpanel.current_season_cutoffs(bootstrap, season)
+    cutoffs = mlpanel.current_season_cutoffs(bootstrap, season, hours_before=FORECAST_CUTOFF_HOURS_BEFORE_DEADLINE)
 
     history = pd.concat([mlpanel.load_historical_rows(data_dir),
                          mlpanel.load_current_season_rows(conn, season, target_round)], ignore_index=True)

@@ -1,12 +1,12 @@
 """LangGraph agent: explains a gameweek's P(starts) numbers, or one
 manager's squad against them, in conversation -- never estimates or
-invents a probability itself (same discipline as the agent challenger in
-../src/fpl_starts/agent/predict.py: every number it talks about comes
-from a tool call reading real derived.db/API data, not from the model).
+invents a probability itself: every number it talks about comes from a
+tool call reading the frozen logistic model's registered predictions,
+derived.db or the public FPL API, not from the LLM.
 
 Read-only by construction: every tool below wraps a data.py function, and
-data.py never writes to either derived.db or calls anything but public,
-unauthenticated FPL API endpoints. No pipeline step, no prediction, no
+data.py never writes to derived.db or predictions/, or calls anything but
+public, unauthenticated FPL API endpoints. No pipeline step, no prediction, no
 archive write is reachable from this agent.
 """
 
@@ -28,14 +28,17 @@ PRIOR_SEASON = "2025-26"
 MODEL = "claude-opus-5"
 
 SYSTEM_PROMPT = """You explain Fantasy Premier League P(starts) predictions \
-and gameweek performance to the person you're talking to. You have two \
-tools: one reads how every prediction arm scored for a given gameweek \
-(Brier score and accuracy, stratified by Core/Rotation/Marginal/Deep -- \
+and gameweek performance to the person you're talking to. The P(starts) \
+model is logistic_availability_v1, a frozen, interpretable logistic \
+regression. You have two tools: one reads how the model scored for a given \
+gameweek (Brier score and accuracy, stratified by Core/Rotation/Marginal/Deep -- \
 lower Brier is better, and never quote a single pool-wide number as if it \
 were the whole story, since Deep players are trivially predictable and \
-dominate any pool average); the other, given an FPL manager's team ID and \
-a gameweek, pulls their actual 15-player squad and every model's p_start \
-for each of those players.
+dominate any pool average); the other returns a 15-player squad -- the \
+user's current squad, including transfers they've told the app about, or \
+(from the command line) a manager's squad by team ID and gameweek -- with the \
+model's p_start, availability status, last-gameweek role and start rates for \
+each player.
 
 Never estimate a probability or a score yourself -- every number you state \
 must come from a tool call in this conversation, not from your own \
@@ -45,18 +48,17 @@ plausible-sounding number.
 
 When explaining a squad: point out anyone whose P(starts) is notably low \
 given their squad position (especially the captain/vice-captain, or a \
-starting XI slot rather than the bench), and note when different model \
-arms disagree meaningfully about the same player rather than picking one \
-number silently. Keep answers grounded in the actual returned data, and \
+starting XI slot rather than the bench), and use the availability status, \
+last-gameweek role and start rates to say why. Keep answers grounded in the actual returned data, and \
 concise -- this is a conversation, not a report."""
 
 
 @tool
 def get_gameweek_report(target_round: int) -> str:
-    """Stratified Brier score and accuracy for every P(starts) model arm in
-    `target_round`, across both repos, against three baselines (persistence,
-    season-rate, constant 0.9). Use this to answer "how did the model do in
-    gameweek N" or "which arm performed best". Returns a plain-text table,
+    """Stratified Brier score and accuracy for the logistic P(starts) model
+    in `target_round`, against three baselines (persistence, season-rate,
+    constant 0.9). Use this to answer "how did the model do in gameweek N"
+    or "did it beat persistence". Returns a plain-text table,
     or a message saying no data exists yet if the round hasn't been scored.
     """
     reports = data.load_gameweek_comparison(SEASON, PRIOR_SEASON, target_round)
@@ -74,8 +76,9 @@ def get_gameweek_report(target_round: int) -> str:
 def get_team_squad_predictions(team_id: int, event: int) -> str:
     """One FPL manager's actual 15-player squad for gameweek `event`
     (`team_id` is their public FPL entry ID, e.g. from the URL when viewing
-    a team on the FPL site), with every archived model arm's P(starts) for
-    each player, and which one is captain/vice-captain. Use this to answer
+    a team on the FPL site), with the logistic model's registered P(starts),
+    availability status, last-gameweek role and start rates for each player,
+    and which one is captain/vice-captain. Use this to answer
     "explain my team" or "should I be worried about my captain's P(starts)".
     Returns a plain-text table, or an error message if the team ID or
     gameweek is invalid, or no predictions are archived for that round yet.
@@ -90,6 +93,24 @@ def get_team_squad_predictions(team_id: int, event: int) -> str:
     if squad.empty:
         return "No picks found for team {0}, gameweek {1}.".format(team_id, event)
     return squad.round(4).to_string(index=False)
+
+
+def make_current_squad_tool(get_report):
+    """A tool returning the app user's current squad -- official squad at
+    the end of the last completed gameweek plus the transfers they've told
+    the app about -- via `get_report()`, called at tool-call time."""
+    @tool
+    def get_my_current_squad_predictions() -> str:
+        """The user's current FPL squad (their official squad from the last
+        completed gameweek, with the transfers they've made since applied),
+        with the logistic model's P(starts), availability status,
+        last-gameweek role, start rates and the largest positive/negative
+        factors for each player. Use this for any question about "my team"
+        or "my squad". Returns a plain-text table, or a message saying the
+        squad or its predictions aren't ready yet.
+        """
+        return get_report()
+    return get_my_current_squad_predictions
 
 
 def extract_text(content):
@@ -108,16 +129,18 @@ def extract_text(content):
     )
 
 
-def build_agent():
-    # Same anthropic-workspace-id handling as ../src/fpl_starts/agent/predict.py:
-    # an API key that isn't scoped to a single workspace needs this header on
+def build_agent(squad_tool=None):
+    """`squad_tool` (e.g. from make_current_squad_tool) replaces the
+    team-ID squad tool -- the app passes one so chat uses the user's current
+    squad, transfers included."""
+    # An API key that isn't scoped to a single workspace needs this header on
     # every request (confirmed live -- omitting it 400s), a key that *is*
     # scoped doesn't need or accept it being wrong, so only send it when set.
     workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
     default_headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
     llm = ChatAnthropic(model=MODEL, max_tokens=8000, default_headers=default_headers)
-    return create_react_agent(llm, [get_gameweek_report, get_team_squad_predictions],
-                               prompt=SYSTEM_PROMPT)
+    tools = [get_gameweek_report, squad_tool or get_team_squad_predictions]
+    return create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
 
 
 def _main():

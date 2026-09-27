@@ -29,6 +29,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+# dashboard/tests needs Streamlit, so it runs in the dashboard's own venv
+# (`cd dashboard && uv run pytest`).
+testpaths = ["tests"]
 
 [dependency-groups]
 dev = ["pytest>=7.4.4"]

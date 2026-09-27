@@ -33,8 +33,11 @@ by the training mean, so it contributes 0.
   training (and development) seasons. 2026-27 is prospective: the frozen
   model is never refitted, retuned or recalibrated on it.
 - **Cutoff.** Features for gameweek *N* use only information from before
-  *N*'s prediction cutoff (deadline − 2h). Later availability records are
-  rejected.
+  *N*'s prediction cutoff. The model was fitted with historical availability
+  as of deadline − 2h. Forecasts use availability captured up to the
+  deadline itself (since 2026-09-27; earlier forecasts used deadline − 2h).
+  Each forecast snapshot records its own `prediction_cutoff`. Later
+  availability records are rejected.
 - **Frozen means frozen.** `fpl-starts-logistic-train` refuses to overwrite
   an existing model. Any change to `spec.py` is a new `MODEL_ID` with its
   own prospective record, never an edit to `logistic_availability_v1`.

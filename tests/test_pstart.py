@@ -40,7 +40,7 @@ def setup(tmp_path, monkeypatch):
     for r in (1, 2, 3, 4):
         for i, code in enumerate(CODES):
             add_current_gw(conn, code, r, 101 + i % 2, 90 if i < 3 else 0, i < 3)
-    cutoff5 = deadline(SEASON, 5) - pd.Timedelta(hours=spec.CUTOFF_HOURS_BEFORE_DEADLINE)
+    cutoff5 = deadline(SEASON, 5) - pd.Timedelta(hours=predict.FORECAST_CUTOFF_HOURS_BEFORE_DEADLINE)
     for i, code in enumerate(CODES):
         add_snapshot(conn, code, 5, cutoff5 - pd.Timedelta(hours=6), team_code=101 + i % 2,
                      status="d" if code == 1001 else "a", chance=25 if code == 1001 else None)

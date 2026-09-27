@@ -349,6 +349,17 @@ missing current-season history at the start of the season.
 Every snapshot is kept, so predictions can later be compared with actual
 starts without hindsight.
 
+**Forecast cutoff, from 2026-09-27.** Forecasts now use availability
+captured at any time before the deadline, instead of before deadline − 2h,
+so late news counts. Only forecasting changed (`ml/predict.py`): the
+fitted model, `spec.py` and the historical training data are unchanged,
+and the training cutoff stays deadline − 2h. Training availability
+snapshots were typically ~9.5h before the deadline (median), so the model
+already saw inputs of varying freshness. The snapshots above used
+deadline − 2h; each snapshot records its own `prediction_cutoff`. Because
+`predict.py` changed, `model_source_sha256` in `model.json` describes the
+code as fitted, not the current forecasting code.
+
 ## 11. Still open
 
 - **Scoring GWs 1–5** against actual starts with `fpl-starts-score`.

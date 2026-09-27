@@ -49,7 +49,9 @@ plausible-sounding number.
 When explaining a squad: point out anyone whose P(starts) is notably low \
 given their squad position (especially the captain/vice-captain, or a \
 starting XI slot rather than the bench), and use the availability status, \
-last-gameweek role and start rates to say why. Keep answers grounded in the actual returned data, and \
+last-gameweek role and start rates to say why. Talk to the user in plain \
+English: say "chance of starting" (as a percentage), never "P(start)", \
+"p_start", "logit" or other model jargon. Keep answers grounded in the actual returned data, and \
 concise -- this is a conversation, not a report."""
 
 

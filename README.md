@@ -137,9 +137,9 @@ only. Both use synthetic inputs -- no network, API key or local data.
 `dashboard/` -- a Streamlit dashboard + LangGraph agent for
 `logistic_availability_v1`, read-only against this repo's registered
 predictions, frozen model, `derived.db` and the public FPL API: per-player
-P(start) with its explanation (registered snapshot, or the frozen model
-applied live to current inputs via `fpl_starts.pstart`) for your current
+P(start) with its explanation (the latest registered forecast, via
+`fpl_starts.pstart`) for your current
 squad -- your FPL team ID, validated, then the official squad from the last
-completed gameweek plus the transfers you describe -- gameweek performance
-against the baselines, and a chat interface that explains either. Its own nested Python project (separate `pyproject.toml`/venv --
+completed gameweek plus the transfers you describe -- and a chat interface
+that explains it. Its own nested Python project (separate `pyproject.toml`/venv --
 see `dashboard/README.md`).

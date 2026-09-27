@@ -83,7 +83,8 @@ def load_gameweek_predictions(season, target_round, source=SOURCE_REGISTERED, mo
     """`pstart.PStartPredictions` for one gameweek: the registered snapshot,
     or (source=SOURCE_LIVE) the frozen `model` applied to current inputs."""
     if source == SOURCE_REGISTERED:
-        return pstart.load_registered_predictions(season, target_round, PREDICTIONS_DIR, FPL_STARTS_DB_PATH)
+        return pstart.load_registered_predictions(season, target_round, PREDICTIONS_DIR, FPL_STARTS_DB_PATH,
+                                                  MODELS_DIR)
     if source == SOURCE_LIVE:
         if model is None:
             model = load_frozen_model()
@@ -99,20 +100,6 @@ def load_gameweek_predictions(season, target_round, source=SOURCE_REGISTERED, mo
                                               "paths are relative to the repo root: start Streamlit from {1}"
                                               .format(exc, REPO_ROOT)) from exc
     raise ValueError("unknown P(start) source: {0!r}".format(source))
-
-
-def _format_factors(frame):
-    return "; ".join("{0:+.2f} {1}".format(r.contribution, r.feature) for r in frame.itertuples())
-
-
-def with_top_factors(predictions, n=2):
-    """`predictions.players` plus `top_positive`/`top_negative` columns:
-    each player's n largest log-odds contributions in each direction."""
-    players = predictions.players.copy()
-    factors = [predictions.top_factors(code, n) for code in players["code"]]
-    players["top_positive"] = [_format_factors(pos) for pos, _ in factors]
-    players["top_negative"] = [_format_factors(neg) for _, neg in factors]
-    return players
 
 
 def load_squad_predictions(team_id, event, season, target_round, predictions=None):

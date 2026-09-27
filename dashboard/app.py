@@ -17,32 +17,44 @@ login` profile) for the chat tab only.
 
 import os
 
+import pandas as pd
 import streamlit as st
+
+from fpl_starts import explanation
 
 import data
 import squad
-from agent import PRIOR_SEASON, SEASON, build_agent, extract_text, make_current_squad_tool
+from agent import SEASON, build_agent, extract_text, make_current_squad_tool
 
-st.set_page_config(page_title="P(starts) dashboard", layout="wide")
-st.title("P(starts) dashboard")
+st.set_page_config(page_title="Who's likely to start?", layout="wide")
+st.title("Who's likely to start?")
 
-SOURCES = {"Registered snapshot": data.SOURCE_REGISTERED, "Live (frozen model, current inputs)": data.SOURCE_LIVE}
-PLAYER_TABLE = ["web_name", "team", "gameweek", "p_start", "availability_status", "last_gw_role",
-                "current_season_start_rate", "previous_season_start_rate", "top_positive", "top_negative"]
-SQUAD_COLUMNS = ["code", "web_name", "team", "position", "full_name"]
+PLAYER_TABLE = {  # field -> heading
+    "web_name": "Player", "team": "Team", "p_start": "Chance of starting",
+    "availability_status": "Availability", "last_gw_role": "Last GW",
+    "current_season_start_rate": "Start rate (this season)", "previous_season_start_rate": "Start rate (last season)",
+}
+SQUAD_COLUMNS = {"full_name": "Player", "team": "Team", "position": "Position"}  # field -> heading
+AVAILABILITY_LABELS = {
+    "available": "Available", "doubtful_75": "Doubtful (75%)", "doubtful_50": "Doubtful (50%)",
+    "doubtful_25": "Doubtful (25%)", "injured": "Injured", "suspended": "Suspended",
+    "unavailable": "Unavailable", "unknown": "Unknown",
+}
+LAST_GW_LABELS = {
+    "started_60_plus": "Started, 60+ mins", "started_under_60": "Started, under 60 mins",
+    "sub_appearance": "Came off the bench", "did_not_play": "Didn't play",
+}
+PERCENT_COLUMNS = ["Chance of starting", "Start rate (this season)", "Start rate (last season)"]
+PERCENT_FORMAT = {c: st.column_config.NumberColumn(format="%d%%") for c in PERCENT_COLUMNS}
 TEAM_ID_HELP = ("**Where do I find my team ID?** Open your FPL **Points** page on "
                 "[fantasy.premierleague.com](https://fantasy.premierleague.com) and look at the URL. "
                 "Your team ID is the number after `/entry/`. "
                 "Example: `fantasy.premierleague.com/entry/1234567/event/1`")
 
 
-@st.cache_resource
-def frozen_model():
-    return data.load_frozen_model()
-
-
 @st.cache_data(ttl=300)
-def registered_predictions(season, target_round):
+def latest_forecast(season, target_round):
+    """The latest registered forecast for `target_round`, read-only."""
     return data.load_gameweek_predictions(season, target_round, data.SOURCE_REGISTERED)
 
 
@@ -51,15 +63,21 @@ def bootstrap():
     return data.fetch_bootstrap()
 
 
-def gameweek_predictions(season, target_round, source):
-    if source == data.SOURCE_REGISTERED:
-        return registered_predictions(season, target_round)
-    return data.load_gameweek_predictions(season, target_round, source, model=frozen_model())
+def presentable(frame, columns):
+    """`frame`'s `columns` ({field: heading}) with readable headings and
+    values: labels for availability/last-GW codes, rates as percentages."""
+    out = frame[list(columns)].rename(columns=columns)
+    for heading, labels in (("Availability", AVAILABILITY_LABELS), ("Last GW", LAST_GW_LABELS)):
+        if heading in out:
+            out[heading] = out[heading].map(labels).fillna(out[heading])
+    for heading in PERCENT_COLUMNS:
+        if heading in out:
+            out[heading] = (out[heading] * 100).round()
+    return out
 
 
 def squad_frame(players):
-    import pandas as pd
-    return pd.DataFrame([{k: p.get(k) for k in SQUAD_COLUMNS} for p in players])
+    return pd.DataFrame([{heading: p.get(k) for k, heading in SQUAD_COLUMNS.items()} for p in players])
 
 
 # --- onboarding: team -> official squad -> transfers -> current squad -------------------------
@@ -135,35 +153,25 @@ current_squad = state["current_squad"]
 
 # --- predictions for the current squad ----------------------------------------------------
 
-tab_predictions, tab_squad, tab_performance, tab_chat = st.tabs(
-    ["Predictions", "My squad", "Performance", "Ask the agent"])
+tab_predictions, tab_chat = st.tabs(["Predictions", "Ask the agent"])
 
 with tab_predictions:
-    st.subheader("P(start) for your current squad -- logistic_availability_v1")
-    col1, col2 = st.columns(2)
-    pred_round = col1.number_input("Gameweek", min_value=1, max_value=38, value=min(last_gw + 1, 38), step=1,
-                                   key="pred_round")
-    source_label = col2.radio("Source", list(SOURCES), key="pred_source",
-                              help="Registered snapshots are the prospective record and are only read. "
-                                   "Live applies the frozen model to the current inputs; nothing is "
-                                   "fitted or saved.")
-    if st.button("Load", key="pred_load") or "predictions" not in state:
-        with st.spinner("Loading predictions..."):
-            try:
-                state.predictions = gameweek_predictions(SEASON, int(pred_round), SOURCES[source_label])
-            except Exception as exc:  # noqa: BLE001 -- shown to the user, not a crash
-                state.predictions = None
-                st.error(str(exc))
+    next_gw = last_gw + 1
+    st.subheader("How likely is each of your players to start in gameweek {0}?".format(next_gw))
+    if state.get("predictions") is None:
+        try:
+            state.predictions = latest_forecast(SEASON, next_gw)
+        except Exception as exc:  # noqa: BLE001 -- shown to the user, not a crash
+            st.error(str(exc))
 
     if state.get("predictions") is not None:
         predictions, missing = squad.squad_predictions(state.predictions, current_squad)
         meta = predictions.metadata
-        st.caption("{0} | {1} | GW{2} | cutoff {3}{4}".format(
-            meta["model_id"], meta["source"], meta["gameweek"], meta["prediction_cutoff"],
-            "" if meta["predicted_at"] is None else " | predicted {0}{1}".format(
-                meta["predicted_at"], " (after deadline)" if meta["generated_after_deadline"] else "")))
-        players = data.with_top_factors(predictions).sort_values("p_start", ascending=False)
-        st.dataframe(players[PLAYER_TABLE].round(3), use_container_width=True, hide_index=True)
+        st.caption("Latest forecast from {0}, made {1}.".format(
+            meta["model_id"], pd.Timestamp(meta["predicted_at"]).strftime("%d %b %Y %H:%M UTC")))
+        players = predictions.players.sort_values("p_start", ascending=False)
+        st.dataframe(presentable(players, PLAYER_TABLE), column_config=PERCENT_FORMAT,
+                     use_container_width=True, hide_index=True)
         if missing:
             st.warning("No prediction for: {0}".format(", ".join(squad.describe(p) for p in missing)))
 
@@ -173,56 +181,20 @@ with tab_predictions:
         if chosen:
             code = labels[chosen]
             row = players.set_index("code").loc[code]
-            st.markdown("**P(start): {0:.0%}** (logit {1:+.2f} = intercept {2:+.2f} + contributions)".format(
-                row["p_start"], row["logit"], meta["intercept"]))
-            positive, negative = predictions.top_factors(code, n=5)
-            columns = ["description", "raw_value", "contribution"]
-            for frame in (positive, negative):  # raw values mix categories and numbers
-                frame["raw_value"] = frame["raw_value"].astype(str)
-            left, right = st.columns(2)
-            left.markdown("Main positive factors")
-            left.dataframe(positive[columns].round(3), use_container_width=True, hide_index=True)
-            right.markdown("Main negative factors")
-            right.dataframe(negative[columns].round(3), use_container_width=True, hide_index=True)
-
-with tab_squad:
-    st.subheader("Current squad vs. P(starts)")
-    if state.get("predictions") is None:
-        st.info("Load predictions in the Predictions tab first.")
-    else:
-        predictions, _ = squad.squad_predictions(state.predictions, current_squad)
-        table = squad.squad_table(current_squad, predictions)
-
-        def _highlight(row):
-            if row["is_captain"]:
-                return ["background-color: #2d5a2d"] * len(row)
-            if row["is_vice_captain"]:
-                return ["background-color: #3a3a1f"] * len(row)
-            if row["transferred_in"]:
-                return ["background-color: #1f3a5a"] * len(row)
-            if row["multiplier"] == 0:
-                return ["color: #888888"] * len(row)
-            return [""] * len(row)
-        st.dataframe(table.style.apply(_highlight, axis=1), use_container_width=True, hide_index=True)
-        st.caption("Green = captain, yellow = vice-captain, blue = transferred in since GW{0}, "
-                   "grey = benched in GW{0}.".format(last_gw))
-
-with tab_performance:
-    st.subheader("Gameweek performance, logistic_availability_v1 vs baselines")
-    target_round = st.number_input("Gameweek", min_value=1, max_value=38, value=last_gw, step=1,
-                                    key="perf_round")
-    if st.button("Load", key="perf_load"):
-        with st.spinner("Scoring..."):
-            try:
-                reports = data.load_gameweek_comparison(SEASON, PRIOR_SEASON, target_round)
-            except Exception as exc:  # noqa: BLE001 -- shown to the user, not a crash
-                st.error(str(exc))
-                reports = {}
-        if not reports:
-            st.info("No scored predictions found for round {0} yet.".format(target_round))
-        for label, df in reports.items():
-            st.markdown("**{0}**".format(label))
-            st.dataframe(df.round(4), use_container_width=True)
+            st.markdown("**Chance of starting: {0:.0%}**".format(row["p_start"]))
+            st.caption("A regular starter (available and playing every week) would be at {0:.0%}. "
+                       "The table shows what's holding him back.".format(meta["reference_p_start"]))
+            rows = predictions.explain(code)
+            if (rows["gap"] < explanation.NEGLIGIBLE_GAP).all():
+                st.success("Nothing is holding him back: he's in line with a nailed-on starter.")
+            st.dataframe(pd.DataFrame({
+                "Factor": rows["label"],
+                "What we know": [f[:1].upper() + f[1:] for f in rows["facts"]],
+                "Impact": rows["gap"].map(explanation.impact),
+                "Chance without this issue": [
+                    "{0:.0%}".format(p) if abs(g) >= explanation.NEGLIGIBLE_GAP else "–"
+                    for p, g in zip(rows["p_start_if_nailed_on"], rows["gap"])],
+            }), use_container_width=True, hide_index=True)
 
 with tab_chat:
     st.subheader("Ask about a gameweek or your squad")

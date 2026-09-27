@@ -129,9 +129,11 @@ uv run pytest
 
 ## Dashboard
 
-`dashboard/` -- a Streamlit dashboard + LangGraph agent, read-only against
-this repo's and the private repo's `derived.db` and the public FPL API:
-gameweek performance across every arm, one manager's squad (by FPL team
-ID) against P(starts) predictions, and a chat interface that explains
-either. Its own nested Python project (separate `pyproject.toml`/venv --
+`dashboard/` -- a Streamlit dashboard + LangGraph agent for
+`logistic_availability_v1`, read-only against this repo's registered
+predictions, frozen model, `derived.db` and the public FPL API: per-player
+P(start) with its explanation (registered snapshot, or the frozen model
+applied live to current inputs via `fpl_starts.pstart`), gameweek
+performance against the baselines, one manager's squad (by FPL team ID),
+and a chat interface that explains either. Its own nested Python project (separate `pyproject.toml`/venv --
 see `dashboard/README.md`).

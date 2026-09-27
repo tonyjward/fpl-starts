@@ -1,10 +1,19 @@
-"""Read-only data access for the dashboard and agent: both repos' derived.db
-files, and the live (public, unauthenticated) FPL manager-team API.
+"""Read-only data access for the dashboard and agent: the frozen logistic
+P(start) model (logistic_availability_v1) through `fpl_starts.pstart`, this
+repo's derived.db, and the live (public, unauthenticated) FPL API.
 
-Deliberately never writes to either derived.db -- this project's derived
-layer is disposable/rebuilt-from-archive by design (see fpl-starts's
-docs/build_spec_p_starts.md), and a dashboard has no business being a
-second writer to it. Everything here is a plain read or an external GET.
+P(start) comes from one of two places, both via `fpl_starts.pstart` -- the
+dashboard never builds features or applies coefficients itself:
+
+- registered snapshots under predictions/ (the prospective evidence, read
+  only -- opening the dashboard never writes or replaces one);
+- the frozen model applied live to current inputs (nothing fitted, nothing
+  written).
+
+Deliberately never writes to derived.db -- this project's derived layer is
+disposable/rebuilt-from-archive by design, and a dashboard has no business
+being a second writer to it. Everything here is a plain read or an external
+GET.
 """
 
 import os
@@ -13,19 +22,25 @@ import sqlite3
 import pandas as pd
 import requests
 
+from fpl_starts import config, pstart
+from fpl_starts.ml import spec
+
 FPL_API_BASE = "https://fantasy.premierleague.com/api"
 _USER_AGENT = "Mozilla/5.0 (compatible; fpl-dashboard/0.1)"
 
-# This repo's own derived.db (base + agent arms) and the private news repo's
-# (news arms) -- same pair gameweek_report.py (../../fpl/src/gameweek_report.py)
-# reads, see that script's --db-path/--fpl-starts-dir defaults. Overridable
-# via env var for anyone running the dashboard from a different working
-# directory, or without the private repo checked out at all (the fpl-starts
-# side works standalone; FPL_NEWS_DB_PATH is optional).
-FPL_STARTS_DB_PATH = os.environ.get("FPL_DASHBOARD_FPL_STARTS_DB", os.path.join("..", "db", "derived.db"))
-FPL_NEWS_DB_PATH = os.environ.get(
-    "FPL_DASHBOARD_NEWS_DB", os.path.join("..", "..", "fpl", "db", "derived.db")
-)
+# This repo's local runtime data, resolved from the repo root so the app
+# works from any working directory. FPL_DASHBOARD_FPL_STARTS_DB overrides the
+# database path.
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+FPL_STARTS_DB_PATH = os.environ.get("FPL_DASHBOARD_FPL_STARTS_DB",
+                                    os.path.join(REPO_ROOT, config.DERIVED_DB_PATH))
+MODELS_DIR = os.path.join(REPO_ROOT, config.MODELS_DIR)
+PREDICTIONS_DIR = os.path.join(REPO_ROOT, config.PREDICTIONS_DIR)
+DATA_DIR = os.path.join(REPO_ROOT, config.DATA_DIR)
+RAW_DIR = os.path.join(REPO_ROOT, config.RAW_DIR)
+
+SOURCE_REGISTERED = pstart.SOURCE_REGISTERED
+SOURCE_LIVE = pstart.SOURCE_LIVE
 
 
 def _get_json(path):
@@ -59,41 +74,51 @@ def fetch_team_summary(team_id):
     return _get_json("entry/{0}/".format(team_id))
 
 
-def _connect(db_path):
-    if not os.path.isfile(db_path):
-        raise FileNotFoundError(
-            "no database at {0} -- run the dashboard from fpl-starts/dashboard/, "
-            "or set FPL_DASHBOARD_FPL_STARTS_DB / FPL_DASHBOARD_NEWS_DB".format(db_path)
-        )
-    return sqlite3.connect(db_path)
+def load_frozen_model():
+    """The frozen logistic model -- load once per process (st.cache_resource)."""
+    return pstart.load_frozen_model(MODELS_DIR)
 
 
-def load_predictions(db_path, season, target_round, codes=None):
-    """code, web_name, p_start, cold_start, method, model_version for every
-    archived prediction in `target_round` -- optionally filtered to
-    `codes` (e.g. one manager's 15-player squad).
-    """
-    conn = _connect(db_path)
-    sql = (
-        "SELECT pr.code, p.web_name, pr.p_start, pr.cold_start, pr.method, "
-        "pr.model_version FROM predictions pr "
-        "LEFT JOIN players p ON p.code = pr.code "
-        "WHERE pr.season = ? AND pr.target_round = ?"
-    )
-    params = [season, target_round]
-    if codes:
-        sql += " AND pr.code IN ({0})".format(", ".join(["?"] * len(codes)))
-        params += list(codes)
-    df = pd.read_sql(sql, conn, params=params)
-    conn.close()
-    return df
+def load_gameweek_predictions(season, target_round, source=SOURCE_REGISTERED, model=None):
+    """`pstart.PStartPredictions` for one gameweek: the registered snapshot,
+    or (source=SOURCE_LIVE) the frozen `model` applied to current inputs."""
+    if source == SOURCE_REGISTERED:
+        return pstart.load_registered_predictions(season, target_round, PREDICTIONS_DIR, FPL_STARTS_DB_PATH)
+    if source == SOURCE_LIVE:
+        if model is None:
+            model = load_frozen_model()
+        try:
+            return pstart.predict_logistic_p_start(model, season, target_round, FPL_STARTS_DB_PATH, DATA_DIR,
+                                                   RAW_DIR)
+        except pstart.InputDataUnavailable as exc:
+            if os.path.abspath(os.getcwd()) == REPO_ROOT:
+                raise
+            # The raw archive's manifest records file paths relative to the
+            # repo root, so live mode must run from there.
+            raise pstart.InputDataUnavailable("{0} -- live predictions read the raw archive, whose manifest "
+                                              "paths are relative to the repo root: start Streamlit from {1}"
+                                              .format(exc, REPO_ROOT)) from exc
+    raise ValueError("unknown P(start) source: {0!r}".format(source))
 
 
-def load_squad_predictions(team_id, event, season, target_round):
-    """One manager's 15 picks joined to every arm's p_start for that round,
-    across both repos' derived.db -- the "give me my team ID" feature.
-    Columns: code, web_name, position, multiplier, is_captain,
-    is_vice_captain, plus one p_start column per model_version found.
+def _format_factors(frame):
+    return "; ".join("{0:+.2f} {1}".format(r.contribution, r.feature) for r in frame.itertuples())
+
+
+def with_top_factors(predictions, n=2):
+    """`predictions.players` plus `top_positive`/`top_negative` columns:
+    each player's n largest log-odds contributions in each direction."""
+    players = predictions.players.copy()
+    factors = [predictions.top_factors(code, n) for code in players["code"]]
+    players["top_positive"] = [_format_factors(pos) for pos, _ in factors]
+    players["top_negative"] = [_format_factors(neg) for _, neg in factors]
+    return players
+
+
+def load_squad_predictions(team_id, event, season, target_round, predictions=None):
+    """One manager's 15 picks joined to the logistic P(start) for that
+    round -- the "give me my team ID" feature. `predictions` defaults to
+    the registered snapshot for `target_round`.
     """
     bootstrap = fetch_bootstrap()
     id_to_code = {e["id"]: e["code"] for e in bootstrap["elements"]}
@@ -101,41 +126,32 @@ def load_squad_predictions(team_id, event, season, target_round):
     picks_payload = fetch_team_picks(team_id, event)
     picks = pd.DataFrame(picks_payload["picks"])
     picks["code"] = picks["element"].map(id_to_code)
-    codes = picks["code"].dropna().astype(int).tolist()
 
-    frames = []
-    for db_path in (FPL_STARTS_DB_PATH, FPL_NEWS_DB_PATH):
-        if os.path.isfile(db_path):
-            frames.append(load_predictions(db_path, season, target_round, codes=codes))
-    if not frames:
-        raise FileNotFoundError("neither derived.db was found -- check FPL_DASHBOARD_* env vars")
-    predictions = pd.concat(frames, ignore_index=True)
-
-    wide = predictions.pivot_table(
-        index=["code", "web_name"], columns="model_version", values="p_start", aggfunc="first"
-    ).reset_index()
-
-    merged = picks.merge(wide, on="code", how="left")
-    return merged[["code", "web_name", "position", "multiplier", "is_captain",
-                    "is_vice_captain"] + [c for c in wide.columns if c not in ("code", "web_name")]]
+    if predictions is None:
+        predictions = load_gameweek_predictions(season, target_round)
+    columns = ["code", "web_name", "team", "p_start", "availability_status", "last_gw_role",
+               "current_season_start_rate", "previous_season_start_rate"]
+    merged = picks.merge(predictions.players[columns], on="code", how="left")
+    return merged[["code", "web_name", "team", "position", "multiplier", "is_captain", "is_vice_captain",
+                   "p_start", "availability_status", "last_gw_role",
+                   "current_season_start_rate", "previous_season_start_rate"]]
 
 
-def load_gameweek_comparison(season, prior_season, target_round):
-    """Stratified Brier/accuracy per model_version, across both repos'
-    derived.db, reusing fpl_starts.scoring directly (no reimplementation --
-    same building block gameweek_report.py uses, minus the deadline/
-    quarantine bookkeeping that only matters for archiving new predictions,
-    not for reading already-clean ones back).
-    """
-    from fpl_starts.scoring import compare_models, list_model_versions
+def load_gameweek_comparison(season, prior_season, target_round, fetch=None):
+    """Stratified Brier/accuracy of the logistic model's registered
+    predictions against the baselines, via fpl_starts.scoring directly.
+    {} when the round hasn't been predicted and played yet."""
+    from fpl_starts.scoring import ScoringError, score_gameweek
 
-    reports = {}
-    for label, db_path in (("fpl-starts", FPL_STARTS_DB_PATH), ("fpl", FPL_NEWS_DB_PATH)):
-        if not os.path.isfile(db_path):
-            continue
-        conn = _connect(db_path)
-        versions = list_model_versions(conn, season, target_round)
-        if versions:
-            reports[label] = compare_models(conn, season, prior_season, target_round, versions)
+    if not os.path.isfile(FPL_STARTS_DB_PATH):
+        raise FileNotFoundError("no database at {0} -- run fpl-starts-derive, or set "
+                                "FPL_DASHBOARD_FPL_STARTS_DB".format(FPL_STARTS_DB_PATH))
+    conn = sqlite3.connect(FPL_STARTS_DB_PATH)
+    try:
+        report = score_gameweek(conn, season, prior_season, target_round,
+                                model_version=spec.MODEL_VERSION, fetch=fetch)
+    except ScoringError:
+        return {}
+    finally:
         conn.close()
-    return reports
+    return {spec.MODEL_ID: report}

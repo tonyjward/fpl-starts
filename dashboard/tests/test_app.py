@@ -65,6 +65,11 @@ def test_happy_path_no_transfers(fake_fpl):
     assert len(at.tabs[0].radio) == 0 and len(at.tabs[0].number_input) == 0  # no source/gameweek options
     assert "Latest forecast from logistic_availability_v1" in at.tabs[0].caption[0].value
 
+    breakdown = at.tabs[0].dataframe[1].value  # the selected player's grouped explanation
+    assert list(breakdown.columns) == ["Factor", "What we know", "Impact", "Chance without this issue"]
+    assert at.tabs[0].markdown[0].value.startswith("**Chance of starting:")
+    assert any("A regular starter" in c.value for c in at.tabs[0].caption)
+
     at.run()  # a plain rerun keeps the validated team
     assert not any(w.key == "team_id_input" for w in at.text_input)
     assert [t.label for t in at.tabs] == ["Predictions", "Ask the agent"]

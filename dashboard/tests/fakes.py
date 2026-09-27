@@ -82,7 +82,7 @@ def predictions(gameweek=LAST_COMPLETED_GW + 1, source=pstart.SOURCE_REGISTERED)
     """A pstart.PStartPredictions for every fake player, with a distinct
     p_start and a two-feature contribution breakdown per player."""
     teams = {i + 1: name for i, name in enumerate(TEAMS)}
-    rows, contributions = [], []
+    rows, contributions, explained = [], [], []
     for e, web, _, _, team, _ in PLAYERS:
         c = code(e)
         positive, negative = 0.1 * e, -0.05 * (24 - e)
@@ -92,11 +92,19 @@ def predictions(gameweek=LAST_COMPLETED_GW + 1, source=pstart.SOURCE_REGISTERED)
                      "availability_status": "available", "last_gw_role": "started_60_plus",
                      "current_season_start_rate": e / 23, "previous_season_start_rate": None, "cold_start": False,
                      "logit": logit, "team_code": team})
+        for group, label, what, effect in (("club_playing_time", "Playing time at his club", "started some games",
+                                            -0.2 * (24 - e)), ("availability", "Availability", "available", 0.0)):
+            p_if = 1 / (1 + pow(2.718281828459045, -(logit - effect)))
+            explained.append({"code": c, "group": group, "label": label, "facts": what, "effect": effect,
+                              "p_start_if_nailed_on": p_if, "gap": p_if - rows[-1]["p_start"]})
         for feature, value in (("current_season_start_rate", positive), ("minutes_prior_3_gws", negative)):
             contributions.append({"code": c, "feature": feature, "raw_feature": feature, "raw_value": e,
                                   "transformed_value": 1.0, "coefficient": value, "contribution": value,
                                   "description": spec.DESCRIPTIONS[feature]})
     metadata = {"model_id": spec.MODEL_ID, "source": source, "season": spec.PROSPECTIVE_SEASON,
                 "gameweek": gameweek, "predicted_at": "20260920T100000Z", "prediction_cutoff": "2026-10-10T08:00:00Z",
-                "deadline": "2026-10-10T10:00:00Z", "generated_after_deadline": False, "intercept": -1.0}
-    return pstart.PStartPredictions(pd.DataFrame(rows)[pstart.PLAYER_COLUMNS], pd.DataFrame(contributions), metadata)
+                "deadline": "2026-10-10T10:00:00Z", "generated_after_deadline": False, "intercept": -1.0,
+                "reference_p_start": 0.96, "reference_description": "a nailed-on starter"}
+    explanation = pd.DataFrame(explained).sort_values(["code", "effect"], kind="stable").reset_index(drop=True)
+    return pstart.PStartPredictions(pd.DataFrame(rows)[pstart.PLAYER_COLUMNS], pd.DataFrame(contributions), metadata,
+                                    explanation)

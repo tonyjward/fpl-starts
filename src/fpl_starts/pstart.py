@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from . import config
+from . import config, explanation as grouped
 from .ml import logistic, predict, spec
 
 SOURCE_REGISTERED = "registered_snapshot"
@@ -59,18 +59,17 @@ class PStartPredictions:
     """`players`: one row per player (PLAYER_COLUMNS). `contributions`: one
     row per (player, transformed feature) -- raw value, coefficient and
     log-odds contribution; intercept + a player's contributions = his logit.
-    `metadata`: model id, source and timing of the predictions."""
+    `metadata`: model id, source and timing of the predictions, and the
+    nailed-on reference. `explanation`: one row per (player, group) compared
+    with a nailed-on starter (see fpl_starts.explanation)."""
     players: pd.DataFrame
     contributions: pd.DataFrame
     metadata: dict
+    explanation: pd.DataFrame
 
-    def top_factors(self, code, n=3):
-        """(positive, negative): a player's n largest non-zero log-odds
-        contributions in each direction, largest magnitude first."""
-        c = self.contributions[(self.contributions["code"] == code) & (self.contributions["contribution"] != 0)]
-        positive = c[c["contribution"] > 0].sort_values("contribution", ascending=False).head(n)
-        negative = c[c["contribution"] < 0].sort_values("contribution").head(n)
-        return positive.reset_index(drop=True), negative.reset_index(drop=True)
+    def explain(self, code):
+        """A player's grouped explanation, most-limiting group first."""
+        return self.explanation[self.explanation["code"] == code].reset_index(drop=True)
 
 
 def model_path(models_dir=config.MODELS_DIR):
@@ -102,7 +101,7 @@ def _names(conn):
     return players, teams
 
 
-def _build(records, explanations, players, teams, season, target_round, metadata):
+def _build(records, explanations, players, teams, season, target_round, metadata, model):
     df = pd.DataFrame(records)
     raw = {exp["code"]: {f["raw_feature"]: f["raw_value"] for f in exp["features"]} for exp in explanations}
     for column in _EXPLANATION_COLUMNS:
@@ -115,13 +114,18 @@ def _build(records, explanations, players, teams, season, target_round, metadata
         dict(code=exp["code"], description=spec.DESCRIPTIONS.get(f["feature"]), **f)
         for exp in explanations for f in exp["features"]
     ])
-    return PStartPredictions(df[PLAYER_COLUMNS], contributions, metadata)
+    _, reference_logit = grouped.reference_values(model)
+    metadata = dict(metadata, reference_p_start=grouped.sigmoid(reference_logit),
+                    reference_description=grouped.NAILED_ON_DESCRIPTION)
+    explained = grouped.grouped_explanation(contributions, df.set_index("code")["logit"].to_dict(), target_round, model)
+    return PStartPredictions(df[PLAYER_COLUMNS], contributions, metadata, explained)
 
 
 def load_registered_predictions(season, target_round, predictions_dir=config.PREDICTIONS_DIR,
-                                db_path=config.DERIVED_DB_PATH):
+                                db_path=config.DERIVED_DB_PATH, models_dir=config.MODELS_DIR):
     """The latest registered `spec.MODEL_ID` snapshot for (season,
-    target_round), read-only, with player and team names from derived.db."""
+    target_round), read-only, with player and team names from derived.db and
+    the grouped explanation from the frozen model that made it."""
     season_dir = os.path.join(predictions_dir, season)
     candidates = []
     if os.path.isdir(season_dir):
@@ -140,6 +144,11 @@ def load_registered_predictions(season, target_round, predictions_dir=config.PRE
     if model_id != spec.MODEL_ID:
         raise NoPredictionAvailable("No prediction available for this gameweek: the {0} GW{1} snapshot was made by "
                                     "{2!r}, not {3}".format(season, target_round, model_id, spec.MODEL_ID))
+    model = load_frozen_model(models_dir)
+    if payload["model"].get("model_sha256") != logistic.file_sha256(model_path(models_dir)):
+        raise NoPredictionAvailable("No prediction available for this gameweek: the {0} GW{1} snapshot was made by "
+                                    "a different {2} model file than {3}".format(
+                                        season, target_round, spec.MODEL_ID, model_path(models_dir)))
 
     conn = _connect_read_only(db_path)
     try:
@@ -152,7 +161,8 @@ def load_registered_predictions(season, target_round, predictions_dir=config.PRE
         "deadline": payload.get("deadline"), "generated_after_deadline": payload.get("generated_after_deadline"),
         "model_sha256": payload["model"].get("model_sha256"), "intercept": payload["model"].get("intercept"),
     }
-    return _build(payload["predictions"], payload["explanations"], players, teams, season, target_round, metadata)
+    return _build(payload["predictions"], payload["explanations"], players, teams, season, target_round, metadata,
+                  model)
 
 
 def predict_logistic_p_start(model, season, target_round, db_path=config.DERIVED_DB_PATH,
@@ -178,4 +188,4 @@ def predict_logistic_p_start(model, season, target_round, db_path=config.DERIVED
         "generated_after_deadline": None, "model_created_at": model.metadata.get("created_at"),
         "intercept": model.intercept,
     }
-    return _build(records, explanations, players, teams, season, target_round, metadata)
+    return _build(records, explanations, players, teams, season, target_round, metadata, model)

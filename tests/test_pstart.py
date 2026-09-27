@@ -6,13 +6,14 @@ explanations passed through intact. Synthetic inputs only."""
 import ast
 import importlib.util
 import json
+import math
 import os
 
 import pandas as pd
 import pytest
 from sklearn.linear_model import LogisticRegression
 
-from fpl_starts import derived, pstart
+from fpl_starts import derived, explanation, pstart
 from fpl_starts.ml import logistic, predict, spec
 from fpl_starts.ml.preprocessing import sigmoid
 
@@ -77,7 +78,8 @@ def _register(setup, target_round=5, when="2026-09-18 10:00"):
 
 
 def _registered(setup, target_round=5):
-    return pstart.load_registered_predictions(SEASON, target_round, setup["predictions_dir"], setup["db"])
+    return pstart.load_registered_predictions(SEASON, target_round, setup["predictions_dir"], setup["db"],
+                                              setup["models_dir"])
 
 
 # --- 1, 2: logistic probabilities from logistic_availability_v1 -----------------
@@ -229,17 +231,95 @@ def test_contributions_are_passed_through_exactly(setup):
     assert c["description"].notna().all()
 
 
-def test_top_factors_split_by_sign_and_rank_by_size(setup):
+# --- grouped explanation, compared with a nailed-on starter ---------------------------------
+
+def _reference_logit(result):
+    p = result.metadata["reference_p_start"]
+    return math.log(p / (1 - p))
+
+
+def test_groups_cover_every_model_input_exactly_once():
+    features = [f for group in explanation.GROUPS.values() for f in group]
+    assert sorted(features) == sorted(spec.RAW_FEATURES) and len(features) == len(set(features))
+    assert set(explanation.NAILED_ON) == set(spec.RAW_FEATURES)
+
+
+@pytest.mark.parametrize("source", ["live", "registered"])
+def test_group_effects_reproduce_every_prediction_exactly(setup, source):
+    if source == "registered":
+        _register(setup)
+    result = _live(setup) if source == "live" else _registered(setup)
+    totals = result.explanation.groupby("code")["effect"].sum() + _reference_logit(result)
+    logits = result.players.set_index("code")["logit"]
+    assert totals.loc[logits.index].tolist() == pytest.approx(logits.tolist(), abs=1e-9)
+    assert result.metadata["reference_p_start"] == pytest.approx(
+        sigmoid(explanation.reference_values(pstart.load_frozen_model(setup["models_dir"]))[1]))
+
+
+def test_what_if_figures_are_the_models_prediction_for_a_real_row(setup):
+    """Each group's "if like a nailed-on starter" chance is exactly what the
+    frozen model predicts for the player with that whole group replaced --
+    a full, consistent set of inputs, not one input changed on its own."""
+    model = pstart.load_frozen_model(setup["models_dir"])
     result = _live(setup)
-    positive, negative = result.top_factors(1001, n=3)
-    assert (positive["contribution"] > 0).all() and (negative["contribution"] < 0).all()
-    assert positive["contribution"].is_monotonic_decreasing and negative["contribution"].is_monotonic_increasing
-    assert "availability_status__doubtful_25" in negative["feature"].tolist()
+    raw = {code: dict(zip(g["raw_feature"], g["raw_value"])) for code, g in result.contributions.groupby("code")}
+    for row in result.explanation.itertuples():
+        inputs = dict(raw[row.code])
+        for feature in explanation.GROUPS[row.group] if row.group in explanation.GROUPS else (
+                explanation.GROUPS[explanation.CLUB_PLAYING_TIME] + explanation.GROUPS[explanation.LAST_SEASON]):
+            inputs[feature] = explanation.NAILED_ON[feature]
+        frame = pd.DataFrame([inputs]).astype({"minutes_prior_3_gws": float, "current_season_start_rate": float,
+                                              "previous_season_start_rate": float})
+        assert model.predict_proba(frame)[0] == pytest.approx(row.p_start_if_nailed_on, abs=1e-12)
+
+
+def test_a_nailed_on_player_has_nothing_holding_him_back(setup):
+    result = _live(setup)
+    regular = result.explain(1000)  # started every game, 90 minutes, available, 100% last season
+    assert regular["effect"].abs().max() < 1e-9
+    assert explanation.summary(regular) == "nothing is holding him back compared with a nailed-on starter"
+    assert result.players.set_index("code").loc[1000, "p_start"] == pytest.approx(result.metadata["reference_p_start"])
+
+
+def test_explanation_facts_and_ordering(setup):
+    result = _live(setup)
+    doubtful = result.explain(1001)
+    assert doubtful["effect"].is_monotonic_increasing  # most-limiting group first
+    facts = dict(zip(doubtful["label"], doubtful["facts"]))
+    assert facts["Availability"] == "flagged doubtful (25% chance of playing)"
+    assert facts["Playing time at his club"].startswith("played 60+ minutes last gameweek")
+    squad_player = result.explain(1007)  # never started this season
+    club = squad_player.set_index("label").loc["Playing time at his club"]
+    assert "didn't play last gameweek" in club["facts"] and "started 0% of his games this season" in club["facts"]
+    assert club["effect"] < 0 and club["p_start_if_nailed_on"] > result.players.set_index("code").loc[1007, "p_start"]
+    assert "held back by playing time at his club" in explanation.summary(squad_player)
+
+
+def test_early_gameweeks_merge_the_playing_time_groups(setup):
+    early = _live(setup, target_round=3)
+    assert set(early.explanation["label"]) == {"Availability", "Playing time"}
+    later = _live(setup, target_round=5)
+    assert set(later.explanation["label"]) == {"Availability", "Playing time at his club", "Last season"}
+
+
+def test_snapshot_from_a_different_model_file_is_refused(setup):
+    path, _, _ = _register(setup)
+    payload = json.load(open(path))
+    payload["model"]["model_sha256"] = "0" * 64
+    json.dump(payload, open(path, "w"))
+    with pytest.raises(pstart.NoPredictionAvailable, match="different logistic_availability_v1 model file"):
+        _registered(setup)
+
+
+def test_registered_predictions_need_the_frozen_model(setup, tmp_path):
+    _register(setup)
+    with pytest.raises(pstart.ModelArtefactNotFound, match="Logistic model artefact not found"):
+        pstart.load_registered_predictions(SEASON, 5, setup["predictions_dir"], setup["db"], str(tmp_path / "none"))
 
 
 # --- 7: public-only imports ----------------------------------------------------------------
 
-ALLOWED_IMPORTS = {"__future__", "dataclasses", "json", "os", "sqlite3", "pandas", "requests", "fpl_starts"}
+ALLOWED_IMPORTS = {"__future__", "dataclasses", "json", "math", "os", "sqlite3", "pandas", "requests", "fpl_starts"}
 
 
 def _imported_roots(path):
@@ -253,7 +333,8 @@ def _imported_roots(path):
 
 
 def test_service_and_dashboard_data_import_only_public_packages():
-    for path in (os.path.join(REPO_ROOT, "src", "fpl_starts", "pstart.py"), os.path.join(DASHBOARD_DIR, "data.py")):
+    for path in (os.path.join(REPO_ROOT, "src", "fpl_starts", "pstart.py"),
+                 os.path.join(REPO_ROOT, "src", "fpl_starts", "explanation.py"), os.path.join(DASHBOARD_DIR, "data.py")):
         assert _imported_roots(path) <= ALLOWED_IMPORTS, path
     for name in ("app.py", "data.py", "agent.py", "README.md"):
         text = open(os.path.join(DASHBOARD_DIR, name)).read()
@@ -285,13 +366,6 @@ def test_dashboard_reads_registered_and_live_logistic_predictions(setup, dashboa
         dashboard_data.load_gameweek_predictions(SEASON, 5, "raw_lookup")
 
 
-def test_dashboard_top_factor_columns(setup, dashboard_data):
-    players = dashboard_data.with_top_factors(_live(setup))
-    row = players.set_index("code").loc[1001]
-    assert "availability_status__doubtful_25" in row["top_negative"]
-    assert row["top_positive"] == "" or row["top_positive"].startswith("+")
-
-
 def test_dashboard_squad_uses_logistic_p_start(setup, dashboard_data, monkeypatch):
     _register(setup)
     monkeypatch.setattr(dashboard_data, "fetch_bootstrap",
@@ -303,3 +377,13 @@ def test_dashboard_squad_uses_logistic_p_start(setup, dashboard_data, monkeypatc
     expected = _registered(setup).players.set_index("code")["p_start"]
     assert squad["p_start"].tolist() == [expected[1000], expected[1001]]
     assert squad["availability_status"].tolist() == ["available", "doubtful_25"]
+
+
+def test_impact_is_judged_on_the_percentage_point_gap(setup):
+    result = _live(setup)
+    p = result.players.set_index("code")["p_start"]
+    rows = result.explanation
+    assert (rows["gap"] - (rows["p_start_if_nailed_on"] - rows["code"].map(p))).abs().max() < 1e-12
+    assert [explanation.impact(g) for g in (0.30, 0.12, 0.03, 0.01, -0.01, -0.05)] == [
+        "Holding him back a lot", "Holding him back", "Holding him back a little",
+        "In line with a nailed-on starter", "In line with a nailed-on starter", "Helping him"]

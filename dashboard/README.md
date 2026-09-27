@@ -45,8 +45,17 @@ gameweek) -- the snapshot in `predictions/` written before the deadline by
 and there are no source or gameweek options. (`fpl_starts.pstart` can also
 apply the frozen model live to current inputs; the app doesn't use it.)
 
-Each prediction carries its explanation: every feature's raw value,
-coefficient and log-odds contribution. A missing model, missing inputs or a
+Each prediction is explained against a nailed-on starter (available,
+played 60+ minutes last gameweek and all of the 3 before, started every game
+this season and last -- 96% in the frozen model), by `fpl_starts.explanation`,
+in three groups of inputs that belong together: **availability**, **playing
+time at his club** (last gameweek, the 3 before, start rate this season,
+first game at his club) and **last season**. Each group shows the facts
+behind it, how much it's holding him back, and his chance if that group were
+like a nailed-on starter's -- always a real, consistent player, never one
+input changed on its own. The groups add up exactly to the prediction. In
+gameweeks 1-4, when "last gameweek" still reaches into last season, the two
+playing-time groups are shown as one. A missing model, missing inputs or a
 gameweek with no prediction is an error on screen; there is no fallback to
 any other model.
 
@@ -81,8 +90,9 @@ team.
   Framework-agnostic: it works on any mapping, `st.session_state` or a dict.
 - **`app.py`** -- the onboarding steps, then two tabs for the current
   squad: predictions (chance of starting, availability, last-GW role, start
-  rates, and a per-player breakdown of what makes a start more or less
-  likely), and a chat interface wired to the agent.
+  rates, and a per-player breakdown of what's holding him back compared
+  with a nailed-on starter), and a chat interface wired to the agent, whose
+  squad tool gives the same explanation in text.
 
 ## What this doesn't do (yet)
 

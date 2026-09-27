@@ -161,8 +161,8 @@ def test_predictions_are_selected_for_the_current_squad(state, universe):
     assert JOAO_PEDRO not in set(selected.players["code"]) and CALVERT_LEWIN in set(selected.players["code"])
     assert set(selected.contributions["code"]) == set(codes(state["current_squad"]))
     assert missing == []
-    positive, negative = selected.top_factors(CALVERT_LEWIN)
-    assert len(positive) and len(negative)
+    assert set(selected.explanation["code"]) == set(codes(state["current_squad"]))
+    assert len(selected.explain(CALVERT_LEWIN)) == 2
     table = sq.squad_table(state["current_squad"], selected)
     assert table.loc[table["code"] == CALVERT_LEWIN, "transferred_in"].item() is True
     assert table["p_start"].notna().all()
@@ -181,6 +181,7 @@ def test_chat_squad_report_uses_the_current_squad(state, universe):
     state["predictions"] = fakes.predictions()
     report = sq.current_squad_report(state)
     assert "Calvert-Lewin" in report and "João Pedro" not in report.split("\n", 1)[1]
+    assert "- Calvert-Lewin: held back by playing time at his club (started some games; would be" in report
     assert "João Pedro -> Calvert-Lewin" in report.split("\n", 1)[0]
 
 

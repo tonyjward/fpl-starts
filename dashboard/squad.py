@@ -25,7 +25,7 @@ import unicodedata
 
 import requests
 
-from fpl_starts import pstart
+from fpl_starts import explanation, pstart
 
 NO_TEAM = "NO_TEAM"
 TEAM_ID_VALID = "TEAM_ID_VALID"
@@ -333,9 +333,10 @@ def squad_predictions(predictions, squad):
     codes = [p["code"] for p in squad]
     players = predictions.players[predictions.players["code"].isin(codes)]
     contributions = predictions.contributions[predictions.contributions["code"].isin(codes)]
+    explained = predictions.explanation[predictions.explanation["code"].isin(codes)]
     missing = [p for p in squad if p["code"] not in set(players["code"])]
     return pstart.PStartPredictions(players.reset_index(drop=True), contributions.reset_index(drop=True),
-                                    dict(predictions.metadata)), missing
+                                    dict(predictions.metadata), explained.reset_index(drop=True)), missing
 
 
 def squad_table(squad, predictions):
@@ -351,25 +352,26 @@ def squad_table(squad, predictions):
     return base.merge(predictions.players[columns], on="code", how="left").sort_values("slot").reset_index(drop=True)
 
 
-def current_squad_report(state, n_factors=2):
-    """Plain-text current squad with P(start) and top factors -- what the
-    chat agent's squad tool returns."""
+def current_squad_report(state):
+    """Plain-text current squad with each player's P(start) and what is
+    holding him back compared with a nailed-on starter -- what the chat
+    agent's squad tool returns."""
     if stage(state) != CURRENT_SQUAD_READY:
         return "The user's squad hasn't been confirmed yet (team ID and transfers since the last gameweek)."
     if state.get("predictions") is None:
         return "No predictions are loaded for the current squad (see the Predictions tab)."
     predictions, missing = squad_predictions(state["predictions"], state["current_squad"])
     table = squad_table(state["current_squad"], predictions)
-    factors = {code: predictions.top_factors(code, n_factors) for code in predictions.players["code"]}
-    table["top_positive"] = table["code"].map(lambda c: "; ".join(
-        "{0:+.2f} {1}".format(r.contribution, r.feature) for r in factors[c][0].itertuples()) if c in factors else "")
-    table["top_negative"] = table["code"].map(lambda c: "; ".join(
-        "{0:+.2f} {1}".format(r.contribution, r.feature) for r in factors[c][1].itertuples()) if c in factors else "")
     meta = predictions.metadata
     lines = ["{0} P(start) for GW{1} ({2}), current squad after transfers since GW{3}: {4}".format(
         meta["model_id"], meta["gameweek"], meta["source"], state["last_completed_gameweek"],
         "; ".join("{0} -> {1}".format(o["out_name"], o["in_name"]) for o in state["transfer_overrides"]) or "none")]
     lines.append(table.drop(columns=["code"]).round(3).to_string(index=False))
+    lines.append("Why, compared with a nailed-on starter ({0}; {1:.0%}):".format(
+        meta["reference_description"], meta["reference_p_start"]))
+    for p in state["current_squad"]:
+        if p["code"] in set(predictions.players["code"]):
+            lines.append("- {0}: {1}".format(p["web_name"], explanation.summary(predictions.explain(p["code"]))))
     if missing:
         lines.append("No prediction for: " + ", ".join(describe(p) for p in missing))
     return "\n".join(lines)

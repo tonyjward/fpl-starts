@@ -20,6 +20,8 @@ import os
 import pandas as pd
 import streamlit as st
 
+from fpl_starts import explanation
+
 import data
 import squad
 from agent import SEASON, build_agent, extract_text, make_current_squad_tool
@@ -180,17 +182,19 @@ with tab_predictions:
             code = labels[chosen]
             row = players.set_index("code").loc[code]
             st.markdown("**Chance of starting: {0:.0%}**".format(row["p_start"]))
-            positive, negative = predictions.top_factors(code, n=5)
-            columns = {"description": "Factor", "raw_value": "Value", "contribution": "Effect"}
-            for frame in (positive, negative):  # raw values mix categories and numbers
-                frame["raw_value"] = frame["raw_value"].astype(str)
-            left, right = st.columns(2)
-            left.markdown("What makes a start more likely")
-            left.dataframe(positive[list(columns)].round(2).rename(columns=columns),
-                           use_container_width=True, hide_index=True)
-            right.markdown("What makes a start less likely")
-            right.dataframe(negative[list(columns)].round(2).rename(columns=columns),
-                            use_container_width=True, hide_index=True)
+            st.caption("A regular starter (available and playing every week) would be at {0:.0%}. "
+                       "The table shows what's holding him back.".format(meta["reference_p_start"]))
+            rows = predictions.explain(code)
+            if (rows["gap"] < explanation.NEGLIGIBLE_GAP).all():
+                st.success("Nothing is holding him back: he's in line with a nailed-on starter.")
+            st.dataframe(pd.DataFrame({
+                "Factor": rows["label"],
+                "What we know": [f[:1].upper() + f[1:] for f in rows["facts"]],
+                "Impact": rows["gap"].map(explanation.impact),
+                "Chance without this issue": [
+                    "{0:.0%}".format(p) if abs(g) >= explanation.NEGLIGIBLE_GAP else "–"
+                    for p, g in zip(rows["p_start_if_nailed_on"], rows["gap"])],
+            }), use_container_width=True, hide_index=True)
 
 with tab_chat:
     st.subheader("Ask about a gameweek or your squad")

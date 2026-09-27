@@ -24,17 +24,17 @@ import data
 import squad
 from agent import PRIOR_SEASON, SEASON, build_agent, extract_text, make_current_squad_tool
 
-st.set_page_config(page_title="P(starts) dashboard", layout="wide")
-st.title("P(starts) dashboard")
+st.set_page_config(page_title="Who's likely to start?", layout="wide")
+st.title("Who's likely to start?")
 
 PLAYER_TABLE = {  # field -> heading
-    "web_name": "Player", "team": "Team", "gameweek": "Gameweek", "p_start": "P(start)",
+    "web_name": "Player", "team": "Team", "p_start": "Chance of starting",
     "availability_status": "Availability", "last_gw_role": "Last GW",
     "current_season_start_rate": "Start rate (this season)", "previous_season_start_rate": "Start rate (last season)",
 }
 SQUAD_COLUMNS = {"full_name": "Player", "team": "Team", "position": "Position"}  # field -> heading
 SQUAD_TABLE = {  # field -> heading, for the current-squad view
-    "web_name": "Player", "team": "Team", "position": "Position", "role": "Role", "p_start": "P(start)",
+    "web_name": "Player", "team": "Team", "position": "Position", "role": "Role", "p_start": "Chance of starting",
     "availability_status": "Availability", "last_gw_role": "Last GW",
     "current_season_start_rate": "Start rate (this season)", "previous_season_start_rate": "Start rate (last season)",
 }
@@ -47,7 +47,7 @@ LAST_GW_LABELS = {
     "started_60_plus": "Started, 60+ mins", "started_under_60": "Started, under 60 mins",
     "sub_appearance": "Came off the bench", "did_not_play": "Didn't play",
 }
-PERCENT_COLUMNS = ["P(start)", "Start rate (this season)", "Start rate (last season)"]
+PERCENT_COLUMNS = ["Chance of starting", "Start rate (this season)", "Start rate (last season)"]
 PERCENT_FORMAT = {c: st.column_config.NumberColumn(format="%d%%") for c in PERCENT_COLUMNS}
 ROLE_STYLES = {"Captain": "background-color: #2d5a2d", "Vice-captain": "background-color: #3a3a1f",
                "Transferred in": "background-color: #1f3a5a", "Bench": "color: #888888"}
@@ -173,7 +173,7 @@ tab_predictions, tab_squad, tab_performance, tab_chat = st.tabs(
 
 with tab_predictions:
     next_gw = last_gw + 1
-    st.subheader("P(start) for your current squad -- gameweek {0}".format(next_gw))
+    st.subheader("How likely is each of your players to start in gameweek {0}?".format(next_gw))
     if state.get("predictions") is None:
         try:
             state.predictions = latest_forecast(SEASON, next_gw)
@@ -197,20 +197,21 @@ with tab_predictions:
         if chosen:
             code = labels[chosen]
             row = players.set_index("code").loc[code]
-            st.markdown("**P(start): {0:.0%}** (logit {1:+.2f} = intercept {2:+.2f} + contributions)".format(
-                row["p_start"], row["logit"], meta["intercept"]))
+            st.markdown("**Chance of starting: {0:.0%}**".format(row["p_start"]))
             positive, negative = predictions.top_factors(code, n=5)
-            columns = ["description", "raw_value", "contribution"]
+            columns = {"description": "Factor", "raw_value": "Value", "contribution": "Effect"}
             for frame in (positive, negative):  # raw values mix categories and numbers
                 frame["raw_value"] = frame["raw_value"].astype(str)
             left, right = st.columns(2)
-            left.markdown("Main positive factors")
-            left.dataframe(positive[columns].round(3), use_container_width=True, hide_index=True)
-            right.markdown("Main negative factors")
-            right.dataframe(negative[columns].round(3), use_container_width=True, hide_index=True)
+            left.markdown("What makes a start more likely")
+            left.dataframe(positive[list(columns)].round(2).rename(columns=columns),
+                           use_container_width=True, hide_index=True)
+            right.markdown("What makes a start less likely")
+            right.dataframe(negative[list(columns)].round(2).rename(columns=columns),
+                            use_container_width=True, hide_index=True)
 
 with tab_squad:
-    st.subheader("Current squad vs. P(starts)")
+    st.subheader("Your squad")
     if state.get("predictions") is None:
         st.info("No forecast is available for gameweek {0} yet.".format(last_gw + 1))
     else:

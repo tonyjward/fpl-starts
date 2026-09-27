@@ -44,7 +44,7 @@ def test_team_id_is_the_first_interaction(fake_fpl):
     at = _start()
     box = at.text_input(key="team_id_input")
     assert box.label == "What is your FPL team ID?"
-    assert box.placeholder == "e.g. 1234567" and box.value == ""
+    assert box.placeholder == "e.g. 44" and box.value == ""
     assert any("Where do I find my team ID?" in c.value for c in at.caption)
     assert not _main_page_shown(at) and not fake_fpl
 

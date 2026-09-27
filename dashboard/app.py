@@ -139,7 +139,7 @@ current_stage = squad.stage(state)
 
 if current_stage == squad.NO_TEAM:
     with st.form("team_id_form"):
-        team_id_text = st.text_input("What is your FPL team ID?", placeholder="e.g. 1234567", key="team_id_input")
+        team_id_text = st.text_input("What is your FPL team ID?", placeholder="e.g. 44", key="team_id_input")
         submitted = st.form_submit_button("Continue")
     st.caption(TEAM_ID_HELP)
     if submitted:

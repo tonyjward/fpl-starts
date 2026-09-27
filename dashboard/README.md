@@ -79,12 +79,10 @@ team.
   `CURRENT_SQUAD_READY`), transfer parsing and player-name resolution, and
   selecting the current squad's rows from `fpl_starts.pstart` output.
   Framework-agnostic: it works on any mapping, `st.session_state` or a dict.
-- **`app.py`** -- the onboarding steps, then four tabs for the current
-  squad: predictions (P(start), availability, last-GW role, start rates, top
-  positive/negative factors, and a per-player breakdown), the squad view
-  (captain, vice-captain and transfers highlighted), gameweek performance
-  against the baselines (stratified), and a chat interface wired to the
-  agent.
+- **`app.py`** -- the onboarding steps, then two tabs for the current
+  squad: predictions (chance of starting, availability, last-GW role, start
+  rates, and a per-player breakdown of what makes a start more or less
+  likely), and a chat interface wired to the agent.
 
 ## What this doesn't do (yet)
 

@@ -22,7 +22,7 @@ import streamlit as st
 
 import data
 import squad
-from agent import PRIOR_SEASON, SEASON, build_agent, extract_text, make_current_squad_tool
+from agent import SEASON, build_agent, extract_text, make_current_squad_tool
 
 st.set_page_config(page_title="Who's likely to start?", layout="wide")
 st.title("Who's likely to start?")
@@ -33,11 +33,6 @@ PLAYER_TABLE = {  # field -> heading
     "current_season_start_rate": "Start rate (this season)", "previous_season_start_rate": "Start rate (last season)",
 }
 SQUAD_COLUMNS = {"full_name": "Player", "team": "Team", "position": "Position"}  # field -> heading
-SQUAD_TABLE = {  # field -> heading, for the current-squad view
-    "web_name": "Player", "team": "Team", "position": "Position", "role": "Role", "p_start": "Chance of starting",
-    "availability_status": "Availability", "last_gw_role": "Last GW",
-    "current_season_start_rate": "Start rate (this season)", "previous_season_start_rate": "Start rate (last season)",
-}
 AVAILABILITY_LABELS = {
     "available": "Available", "doubtful_75": "Doubtful (75%)", "doubtful_50": "Doubtful (50%)",
     "doubtful_25": "Doubtful (25%)", "injured": "Injured", "suspended": "Suspended",
@@ -49,8 +44,6 @@ LAST_GW_LABELS = {
 }
 PERCENT_COLUMNS = ["Chance of starting", "Start rate (this season)", "Start rate (last season)"]
 PERCENT_FORMAT = {c: st.column_config.NumberColumn(format="%d%%") for c in PERCENT_COLUMNS}
-ROLE_STYLES = {"Captain": "background-color: #2d5a2d", "Vice-captain": "background-color: #3a3a1f",
-               "Transferred in": "background-color: #1f3a5a", "Bench": "color: #888888"}
 TEAM_ID_HELP = ("**Where do I find my team ID?** Open your FPL **Points** page on "
                 "[fantasy.premierleague.com](https://fantasy.premierleague.com) and look at the URL. "
                 "Your team ID is the number after `/entry/`. "
@@ -79,16 +72,6 @@ def presentable(frame, columns):
         if heading in out:
             out[heading] = (out[heading] * 100).round()
     return out
-
-
-def squad_role(row):
-    if row["transferred_in"]:
-        return "Transferred in"
-    if row["is_captain"]:
-        return "Captain"
-    if row["is_vice_captain"]:
-        return "Vice-captain"
-    return "Bench" if row["multiplier"] == 0 else "Starting XI"
 
 
 def squad_frame(players):
@@ -168,8 +151,7 @@ current_squad = state["current_squad"]
 
 # --- predictions for the current squad ----------------------------------------------------
 
-tab_predictions, tab_squad, tab_performance, tab_chat = st.tabs(
-    ["Predictions", "My squad", "Performance", "Ask the agent"])
+tab_predictions, tab_chat = st.tabs(["Predictions", "Ask the agent"])
 
 with tab_predictions:
     next_gw = last_gw + 1
@@ -209,38 +191,6 @@ with tab_predictions:
             right.markdown("What makes a start less likely")
             right.dataframe(negative[list(columns)].round(2).rename(columns=columns),
                             use_container_width=True, hide_index=True)
-
-with tab_squad:
-    st.subheader("Your squad")
-    if state.get("predictions") is None:
-        st.info("No forecast is available for gameweek {0} yet.".format(last_gw + 1))
-    else:
-        predictions, _ = squad.squad_predictions(state.predictions, current_squad)
-        table = squad.squad_table(current_squad, predictions)
-        table["role"] = table.apply(squad_role, axis=1)
-        view = presentable(table, SQUAD_TABLE)
-        styled = (view.style.apply(lambda row: [ROLE_STYLES.get(row["Role"], "")] * len(row), axis=1)
-                  .format({c: "{:.0f}%" for c in PERCENT_COLUMNS}, na_rep="–"))
-        st.dataframe(styled, use_container_width=True, hide_index=True)
-        st.caption("Roles are from your GW{0} team: captain, vice-captain and bench as picked then; "
-                   "players transferred in since have no role yet.".format(last_gw))
-
-with tab_performance:
-    st.subheader("Gameweek performance, logistic_availability_v1 vs baselines")
-    target_round = st.number_input("Gameweek", min_value=1, max_value=38, value=last_gw, step=1,
-                                    key="perf_round")
-    if st.button("Load", key="perf_load"):
-        with st.spinner("Scoring..."):
-            try:
-                reports = data.load_gameweek_comparison(SEASON, PRIOR_SEASON, target_round)
-            except Exception as exc:  # noqa: BLE001 -- shown to the user, not a crash
-                st.error(str(exc))
-                reports = {}
-        if not reports:
-            st.info("No scored predictions found for round {0} yet.".format(target_round))
-        for label, df in reports.items():
-            st.markdown("**{0}**".format(label))
-            st.dataframe(df.round(4), use_container_width=True)
 
 with tab_chat:
     st.subheader("Ask about a gameweek or your squad")

@@ -39,7 +39,7 @@ SQUAD_STATE_KEYS = [
     "transfer_overrides", "raw_transfer_messages", "transfer_state_confirmed", "current_squad",
     "predictions", "pred_player", "chat_history",
     # widget values, so nothing typed for one team is shown for the next
-    "team_id_input", "transfer_input", "perf_round",
+    "team_id_input", "transfer_input",
 ]
 
 INVALID_TEAM_ID = "That team ID doesn't appear to be valid. Please check it and try again."

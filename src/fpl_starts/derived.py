@@ -42,6 +42,9 @@ CREATE TABLE players (
     element_type INTEGER,
     season_minutes INTEGER,
     season_starts INTEGER,
+    first_name TEXT,
+    second_name TEXT,
+    known_name TEXT,
     FOREIGN KEY (team_code) REFERENCES teams(code)
 );
 
@@ -249,6 +252,10 @@ def _load_players(conn, base_dir, season):
 
     `team_code` is resolved through that same snapshot's own `teams` array
     for the identical reason -- see `_load_teams`.
+
+    `first_name`/`second_name`/`known_name` are FPL's full names (known_name
+    is usually empty): `web_name` alone ("Palmer") can't tell players apart
+    when matching a name someone typed.
     """
     payload = latest_bootstrap_payload(base_dir, season)
     if payload is None:
@@ -267,13 +274,15 @@ def _load_players(conn, base_dir, season):
             code, player_id, element.get("web_name"),
             team_id_to_code.get(element.get("team")),
             element.get("element_type"), element.get("minutes"),
-            element.get("starts"),
+            element.get("starts"), element.get("first_name"),
+            element.get("second_name"), element.get("known_name") or None,
         ))
 
     conn.executemany(
         "INSERT INTO players (code, player_id, web_name, team_code, "
-        "element_type, season_minutes, season_starts) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "element_type, season_minutes, season_starts, first_name, "
+        "second_name, known_name) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     return id_to_code

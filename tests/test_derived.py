@@ -65,10 +65,12 @@ def make_teams(*id_code_pairs):
     return [{"id": team_id, "code": code} for team_id, code in id_code_pairs]
 
 
-def make_player(code, player_id, web_name, minutes, starts, team=1, element_type=3):
+def make_player(code, player_id, web_name, minutes, starts, team=1, element_type=3,
+                first_name=None, second_name=None, known_name=""):
     return {
         "code": code, "id": player_id, "web_name": web_name, "team": team,
         "element_type": element_type, "minutes": minutes, "starts": starts,
+        "first_name": first_name, "second_name": second_name, "known_name": known_name,
     }
 
 
@@ -116,6 +118,29 @@ def seed_consistent_archive(base_dir):
             {"id": 2, "stats": make_stats(0, 0, total_points=0)},
         ],
     })
+
+
+def test_rebuild_stores_full_player_names(tmp_path):
+    """web_name alone ("Palmer") is ambiguous, so players also carries FPL's
+    first/second/known names; an empty known_name is stored as NULL."""
+    base_dir = str(tmp_path / "raw")
+    write_ok_entry(base_dir, SEASON, "bootstrap-static", 3, T3, {
+        "teams": make_teams((1, 3)),
+        "elements": [
+            make_player(1001, 1, "Palmer", 0, 0, first_name="Cole", second_name="Palmer"),
+            make_player(1002, 2, "Palmer", 0, 0, first_name="Alex", second_name="Palmer"),
+            make_player(1003, 3, "Son", 0, 0, first_name="Heung-Min", second_name="Son", known_name="Son"),
+        ],
+    })
+    db_path = str(tmp_path / "derived.db")
+    derived.rebuild(base_dir=base_dir, db_path=db_path, predictions_dir=str(tmp_path / "predictions"))
+    rows = sqlite3.connect(db_path).execute(
+        "SELECT code, web_name, first_name, second_name, known_name FROM players ORDER BY code").fetchall()
+    assert rows == [
+        (1001, "Palmer", "Cole", "Palmer", None),
+        (1002, "Palmer", "Alex", "Palmer", None),
+        (1003, "Son", "Heung-Min", "Son", "Son"),
+    ]
 
 
 def test_rebuild_loads_players_and_gameweek_stats(tmp_path):

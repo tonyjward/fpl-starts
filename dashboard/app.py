@@ -287,23 +287,30 @@ with tab_chat:
     if "chat_history" not in state:
         state.chat_history = []
 
-    for message in state.chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # Inside a tab the chat input isn't pinned to the bottom of the page -- it
+    # sits where it's drawn. So the conversation goes in a container drawn
+    # above it, and a new question and answer are written into that
+    # container, keeping the input box below the latest message.
+    conversation = st.container()
+    with conversation:
+        for message in state.chat_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-    question = st.chat_input("e.g. \"How did gameweek 5 go?\" or \"Should I worry about my captain?\"")
+    question = st.chat_input("e.g. \"Who's at risk in my squad?\" or \"Is Palmer fit?\"")
     if question:
         state.chat_history.append({"role": "user", "content": question})
-        with st.chat_message("user"):
-            st.markdown(question)
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                version_before = data.db_version()
-                state.chat["ctx"] = tools_context()
-                result = state.agent.invoke({"messages": [{"role": "user", "content": question}]})
-                keep_tool_writes(state.chat["ctx"])
-                answer = extract_text(result["messages"][-1].content)
-            st.markdown(answer)
+        with conversation:
+            with st.chat_message("user"):
+                st.markdown(question)
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    version_before = data.db_version()
+                    state.chat["ctx"] = tools_context()
+                    result = state.agent.invoke({"messages": [{"role": "user", "content": question}]})
+                    keep_tool_writes(state.chat["ctx"])
+                    answer = extract_text(result["messages"][-1].content)
+                st.markdown(answer)
         state.chat_history.append({"role": "assistant", "content": answer})
         if data.db_version() != version_before:
             # A refresh rebuilt the data after the Predictions tab was drawn

@@ -191,3 +191,23 @@ def test_chat_tool_writes_reach_the_session(fake_fpl, scripted_llm):
     assert not at.exception
     assert "+ £2.5m in the bank (your figure)" in at.chat_message[-1].markdown[0].value
     assert at.session_state["bank_override"] == 2.5  # remembered for the next question
+
+
+def _chat_order(block):
+    order = []
+    for child in block.children.values():
+        kind = type(child).__name__
+        if kind in ("ChatInput", "ChatMessage"):
+            order.append(kind)
+        elif hasattr(child, "children"):
+            order += _chat_order(child)
+    return order
+
+
+def test_the_chat_input_stays_below_the_latest_message(fake_fpl, scripted_llm):
+    scripted_llm("squad_risks")
+    at = _ready_for_chat()
+    at.chat_input[0].set_value("Who's at risk?").run()  # the run that answers
+    assert _chat_order(at.tabs[1]) == ["ChatMessage", "ChatMessage", "ChatInput"]
+    at.chat_input[0].set_value("And now?").run()
+    assert _chat_order(at.tabs[1]) == ["ChatMessage"] * 4 + ["ChatInput"]

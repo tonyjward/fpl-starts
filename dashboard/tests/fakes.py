@@ -48,15 +48,14 @@ def code(element):
     return 100000 + element
 
 
-def bootstrap():
-    return {
-        "events": [{"id": gw, "finished": gw <= LAST_COMPLETED_GW} for gw in range(1, 39)],
-        "teams": [{"id": i + 1, "name": name, "short_name": name[:3].upper()} for i, name in enumerate(TEAMS)],
-        "element_types": [{"id": 1, "singular_name_short": "GKP"}, {"id": 2, "singular_name_short": "DEF"},
-                          {"id": 3, "singular_name_short": "MID"}, {"id": 4, "singular_name_short": "FWD"}],
-        "elements": [{"id": e, "code": code(e), "web_name": w, "first_name": f, "second_name": s, "known_name": "",
-                      "team": t, "element_type": et} for e, w, f, s, t, et in PLAYERS],
-    }
+POSITIONS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
+
+
+def universe():
+    """The player list as data.load_player_universe() returns it from derived.db."""
+    return {code(e): {"code": code(e), "element": e, "web_name": w, "full_name": "{0} {1}".format(f, s),
+                      "known_name": "", "second_name": s, "team": TEAMS[t - 1], "position": POSITIONS[et]}
+            for e, w, f, s, t, et in PLAYERS}
 
 
 def http_error(status):

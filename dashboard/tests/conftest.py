@@ -24,7 +24,9 @@ def fake_fpl(monkeypatch):
     st.cache_data.clear()
     st.cache_resource.clear()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
-    monkeypatch.setattr(data, "fetch_bootstrap", fakes.bootstrap)
+    monkeypatch.setattr(data, "load_player_universe", fakes.universe)
+    monkeypatch.setattr(data, "last_completed_gameweek", lambda season=None: fakes.LAST_COMPLETED_GW)
+    monkeypatch.setattr(data, "db_version", lambda: 0)
     monkeypatch.setattr(data, "fetch_team_summary", fakes.fetch_team_summary)
     monkeypatch.setattr(data, "fetch_team_picks", fakes.fetch_team_picks)
     requested = []

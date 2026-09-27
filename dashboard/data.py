@@ -50,15 +50,6 @@ def _get_json(path):
     return resp.json()
 
 
-def fetch_bootstrap():
-    """Live bootstrap-static -- id/code/name/team mapping. Not cached to
-    disk (this is a dashboard, not the write-once archive); Streamlit's own
-    @st.cache_data (applied by callers, not here, to keep this module
-    framework-agnostic) is the right place for any caching.
-    """
-    return _get_json("bootstrap-static/")
-
-
 def fetch_team_picks(team_id, event):
     """One manager's squad for `event`: 15 picks (element id, position,
     multiplier, is_captain, is_vice_captain), plus entry_history (points,
@@ -72,6 +63,62 @@ def fetch_team_picks(team_id, event):
 def fetch_team_summary(team_id):
     """Manager name and overall team name -- for labelling, not analysis."""
     return _get_json("entry/{0}/".format(team_id))
+
+
+# FPL's element_type ids. 5 is FPL's "Manager" entries, which aren't players.
+POSITIONS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
+
+
+def _connect_db():
+    if not os.path.isfile(FPL_STARTS_DB_PATH):
+        raise FileNotFoundError("no database at {0} -- run fpl-starts-derive, or set "
+                                "FPL_DASHBOARD_FPL_STARTS_DB".format(FPL_STARTS_DB_PATH))
+    return sqlite3.connect("file:{0}?mode=ro".format(os.path.abspath(FPL_STARTS_DB_PATH)), uri=True)
+
+
+def db_version():
+    """Changes whenever derived.db is rebuilt (it is replaced as a whole) --
+    a cache key for anything read from it."""
+    return os.path.getmtime(FPL_STARTS_DB_PATH) if os.path.isfile(FPL_STARTS_DB_PATH) else None
+
+
+def load_player_universe():
+    """{code: player} for every player in derived.db: FPL element id, web
+    name, full name, club and position, as of the latest archived
+    bootstrap-static."""
+    conn = _connect_db()
+    try:
+        rows = conn.execute(
+            "SELECT p.code, p.player_id, p.web_name, p.first_name, p.second_name, p.known_name, t.name, "
+            "p.element_type FROM players p LEFT JOIN teams t ON t.code = p.team_code").fetchall()
+    except sqlite3.OperationalError as exc:
+        raise RuntimeError("{0} has no player names ({1}) -- rebuild it with fpl-starts-derive".format(
+            FPL_STARTS_DB_PATH, exc)) from exc
+    finally:
+        conn.close()
+    universe = {}
+    for code, element, web_name, first, second, known, team, element_type in rows:
+        if element_type not in POSITIONS:
+            continue
+        universe[int(code)] = {
+            "code": int(code), "element": int(element), "web_name": web_name,
+            "full_name": " ".join(n for n in (first, second) if n) or web_name,
+            "known_name": known or "", "second_name": second or web_name,
+            "team": team, "position": POSITIONS[element_type],
+        }
+    return universe
+
+
+def last_completed_gameweek(season=spec.PROSPECTIVE_SEASON):
+    """The latest gameweek of `season` with results in derived.db -- the
+    archiver only stores a gameweek's results once FPL has finished checking
+    them. None before the first."""
+    conn = _connect_db()
+    try:
+        (gw,) = conn.execute("SELECT MAX(round) FROM player_gameweek_stats WHERE season = ?", (season,)).fetchone()
+    finally:
+        conn.close()
+    return None if gw is None else int(gw)
 
 
 def load_frozen_model():
@@ -93,12 +140,12 @@ def load_gameweek_predictions(season, target_round, source=SOURCE_REGISTERED, mo
 
 
 def load_squad_predictions(team_id, event, season, target_round, predictions=None):
-    """One manager's 15 picks joined to the logistic P(start) for that
-    round -- the "give me my team ID" feature. `predictions` defaults to
+    """One manager's 15 picks (from the FPL API) joined to the logistic
+    P(start) for that round, players identified through derived.db -- the
+    command-line agent's "give me my team ID" feature. `predictions` defaults to
     the registered snapshot for `target_round`.
     """
-    bootstrap = fetch_bootstrap()
-    id_to_code = {e["id"]: e["code"] for e in bootstrap["elements"]}
+    id_to_code = {p["element"]: code for code, p in load_player_universe().items()}
 
     picks_payload = fetch_team_picks(team_id, event)
     picks = pd.DataFrame(picks_payload["picks"])

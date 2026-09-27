@@ -104,26 +104,6 @@ def normalise(name):
     return " ".join(re.sub(r"[^a-z0-9]+", " ", folded.lower()).split())
 
 
-def player_universe(bootstrap):
-    """{code: player} for every player in bootstrap-static."""
-    teams = {t["id"]: t["name"] for t in bootstrap["teams"]}
-    positions = {t["id"]: t["singular_name_short"] for t in bootstrap["element_types"]}
-    universe = {}
-    for e in bootstrap["elements"]:
-        universe[int(e["code"])] = {
-            "code": int(e["code"]), "element": int(e["id"]), "web_name": e["web_name"],
-            "full_name": "{0} {1}".format(e["first_name"], e["second_name"]).strip(),
-            "known_name": e.get("known_name") or "", "second_name": e["second_name"],
-            "team": teams.get(e["team"]), "position": positions.get(e["element_type"]),
-        }
-    return universe
-
-
-def last_completed_gameweek(bootstrap):
-    finished = [int(e["id"]) for e in bootstrap["events"] if e.get("finished")]
-    return max(finished) if finished else None
-
-
 def _keys(player):
     full, web, second = normalise(player["full_name"]), normalise(player["web_name"]), normalise(player["second_name"])
     first = full.split()[0] if full else ""
@@ -296,10 +276,11 @@ def reset_transfers(state):
         state.pop(key, None)
 
 
-def load_official_squad(state, bootstrap, fetch_team_picks):
-    """The validated team as it stood at the end of the last completed
-    gameweek. Returns None on success, else a message to show."""
-    gw = last_completed_gameweek(bootstrap)
+def load_official_squad(state, universe, gw, fetch_team_picks):
+    """The validated team as it stood at the end of gameweek `gw` (the last
+    completed one): the picks come from the FPL API, the players from
+    `universe` ({code: player}, from derived.db). Returns None on success,
+    else a message to show."""
     if gw is None:
         return "No gameweek has finished yet this season, so there's no official squad to start from."
     try:
@@ -311,8 +292,11 @@ def load_official_squad(state, bootstrap, fetch_team_picks):
         return "Couldn't load the squad from FPL right now ({0}).".format(exc)
     except requests.RequestException as exc:
         return "Couldn't reach FPL to load the squad ({0}).".format(exc)
-    universe = player_universe(bootstrap)
     by_element = {p["element"]: p for p in universe.values()}
+    unknown = [pick["element"] for pick in picks if pick["element"] not in by_element]
+    if unknown:
+        return ("Your squad includes {0} player(s) our FPL data doesn't have yet (FPL id {1}) -- "
+                "our data needs refreshing.".format(len(unknown), ", ".join(map(str, unknown))))
     squad = []
     for pick in sorted(picks, key=lambda p: p["position"]):
         player = dict(by_element[pick["element"]])

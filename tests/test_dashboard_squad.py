@@ -30,7 +30,7 @@ JOAO_PEDRO, CALVERT_LEWIN, BRUNO, WATKINS, COLE_PALMER, HAALAND, SAKA = (
 
 @pytest.fixture
 def universe():
-    return sq.player_universe(fakes.bootstrap())
+    return fakes.universe()
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def state():
     """A session with a validated team and its official squad loaded."""
     s = {}
     assert sq.submit_team_id(s, str(fakes.VALID_TEAM_ID), fakes.fetch_team_summary) is None
-    assert sq.load_official_squad(s, fakes.bootstrap(), fakes.fetch_team_picks) is None
+    assert sq.load_official_squad(s, fakes.universe(), fakes.LAST_COMPLETED_GW, fakes.fetch_team_picks) is None
     return s
 
 
@@ -88,6 +88,23 @@ def test_official_squad_is_the_last_completed_gameweeks(state):
     assert codes(state["official_squad"]) == [fakes.code(e) for e in fakes.SQUAD_ELEMENTS]
     assert sq.stage(state) == sq.OFFICIAL_SQUAD_LOADED
     assert state["current_squad"] is None  # predictions wait for the transfer step
+
+
+def test_no_completed_gameweek_yet_does_not_advance():
+    s = {}
+    sq.submit_team_id(s, str(fakes.VALID_TEAM_ID), fakes.fetch_team_summary)
+    message = sq.load_official_squad(s, fakes.universe(), None, fakes.fetch_team_picks)
+    assert "No gameweek has finished yet" in message and sq.stage(s) == sq.TEAM_ID_VALID
+
+
+def test_a_player_missing_from_our_data_does_not_advance():
+    s = {}
+    sq.submit_team_id(s, str(fakes.VALID_TEAM_ID), fakes.fetch_team_summary)
+    players = fakes.universe()
+    del players[JOAO_PEDRO]  # e.g. signed after our last archive run
+    message = sq.load_official_squad(s, players, fakes.LAST_COMPLETED_GW, fakes.fetch_team_picks)
+    assert "our FPL data doesn't have yet (FPL id 13)" in message
+    assert sq.stage(s) == sq.TEAM_ID_VALID and "official_squad" not in s
 
 
 # --- 4-9: transfers -------------------------------------------------------------------------

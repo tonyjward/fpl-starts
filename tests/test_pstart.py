@@ -8,6 +8,7 @@ import importlib.util
 import json
 import math
 import os
+import sqlite3
 
 import pandas as pd
 import pytest
@@ -45,8 +46,10 @@ def setup(tmp_path, monkeypatch):
         add_snapshot(conn, code, 5, cutoff5 - pd.Timedelta(hours=6), team_code=101 + i % 2,
                      status="d" if code == 1001 else "a", chance=25 if code == 1001 else None)
     conn.executemany("INSERT INTO teams (code, name) VALUES (?, ?)", [(101, "Alpha"), (102, "Bravo")])
-    conn.executemany("INSERT INTO players (code, player_id, web_name, team_code) VALUES (?, ?, ?, ?)",
-                     [(code, i + 1, "Player{0}".format(i), 101 + i % 2) for i, code in enumerate(CODES)])
+    conn.executemany("INSERT INTO players (code, player_id, web_name, team_code, element_type, first_name, "
+                     "second_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     [(code, i + 1, "Player{0}".format(i), 101 + i % 2, 2 if i < 4 else 3, "First{0}".format(i),
+                       "Player{0}".format(i)) for i, code in enumerate(CODES)])
     conn.commit()
     conn.close()
 
@@ -366,10 +369,29 @@ def test_dashboard_reads_registered_and_live_logistic_predictions(setup, dashboa
         dashboard_data.load_gameweek_predictions(SEASON, 5, "raw_lookup")
 
 
+def test_dashboard_reads_players_and_last_gameweek_from_derived_db(setup, dashboard_data):
+    players = dashboard_data.load_player_universe()
+    assert sorted(players) == CODES
+    assert players[1000] == {"code": 1000, "element": 1, "web_name": "Player0", "full_name": "First0 Player0",
+                             "known_name": "", "second_name": "Player0", "team": "Alpha", "position": "DEF"}
+    assert players[1005]["position"] == "MID" and players[1005]["team"] == "Bravo"
+    assert dashboard_data.last_completed_gameweek(SEASON) == 4
+    assert dashboard_data.last_completed_gameweek("2030-31") is None
+    assert dashboard_data.db_version() == os.path.getmtime(setup["db"])
+
+
+def test_dashboard_player_list_needs_a_database_with_names(setup, dashboard_data, tmp_path, monkeypatch):
+    old = str(tmp_path / "old.db")
+    sqlite3.connect(old).executescript("CREATE TABLE teams (code INTEGER, name TEXT);"
+                                       "CREATE TABLE players (code INTEGER, player_id INTEGER, web_name TEXT, "
+                                       "team_code INTEGER, element_type INTEGER);")
+    monkeypatch.setattr(dashboard_data, "FPL_STARTS_DB_PATH", old)
+    with pytest.raises(RuntimeError, match="rebuild it with fpl-starts-derive"):
+        dashboard_data.load_player_universe()
+
+
 def test_dashboard_squad_uses_logistic_p_start(setup, dashboard_data, monkeypatch):
     _register(setup)
-    monkeypatch.setattr(dashboard_data, "fetch_bootstrap",
-                        lambda: {"elements": [{"id": i + 1, "code": c} for i, c in enumerate(CODES)]})
     monkeypatch.setattr(dashboard_data, "fetch_team_picks", lambda team_id, event: {"picks": [
         {"element": 1, "position": 1, "multiplier": 2, "is_captain": True, "is_vice_captain": False},
         {"element": 2, "position": 2, "multiplier": 1, "is_captain": False, "is_vice_captain": True}]})

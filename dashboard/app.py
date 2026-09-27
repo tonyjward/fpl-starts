@@ -58,9 +58,10 @@ def latest_forecast(season, target_round):
     return data.load_gameweek_predictions(season, target_round, data.SOURCE_REGISTERED)
 
 
-@st.cache_data(ttl=600)
-def bootstrap():
-    return data.fetch_bootstrap()
+@st.cache_data
+def player_universe(db_version):
+    """The player list from derived.db, re-read whenever it's rebuilt."""
+    return data.load_player_universe()
 
 
 def presentable(frame, columns):
@@ -107,14 +108,15 @@ if change.button("Change team", key="change_team"):
     st.rerun()
 
 try:
-    fpl_bootstrap = bootstrap()
+    universe = player_universe(data.db_version())
+    if current_stage == squad.TEAM_ID_VALID:
+        latest_gw = data.last_completed_gameweek()
 except Exception as exc:  # noqa: BLE001 -- shown to the user, not a crash
-    st.error("Couldn't load the FPL player list: {0}".format(exc))
+    st.error("Couldn't load our FPL player data: {0}".format(exc))
     st.stop()
-universe = squad.player_universe(fpl_bootstrap)
 
 if current_stage == squad.TEAM_ID_VALID:
-    error = squad.load_official_squad(state, fpl_bootstrap, data.fetch_team_picks)
+    error = squad.load_official_squad(state, universe, latest_gw, data.fetch_team_picks)
     if error:
         st.error(error)
         st.stop()

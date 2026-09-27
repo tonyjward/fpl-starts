@@ -63,7 +63,10 @@ any other model.
 
 The app opens by asking for your FPL team ID, checks it exists (FPL's
 `entry/{id}/`), and loads your official squad as it stood at the end of the
-last completed gameweek. It then asks what you've changed since -- "No
+last completed gameweek (`entry/{id}/event/{gw}/picks/`). Those two calls,
+once per session, are the only live FPL API requests: the player list
+(names, clubs, positions) and the last completed gameweek come from
+`db/derived.db`, built from the archive. It then asks what you've changed since -- "No
 changes", "João Pedro out for Calvert-Lewin", "sold A and B and bought C and
 D" -- and resolves each named player to a stable FPL player code (accents and
 punctuation don't matter; an unknown or ambiguous name, an outgoing player
@@ -75,9 +78,10 @@ team.
 
 ## What's here
 
-- **`data.py`** -- all reads: P(start) via `fpl_starts.pstart`, scoring via
+- **`data.py`** -- all reads: P(start) via `fpl_starts.pstart`, the player
+  list and last completed gameweek from `db/derived.db`, scoring via
   `fpl_starts.scoring` (never a write), and the public, unauthenticated FPL
-  manager-team API (`entry/{team_id}/event/{gw}/picks/`).
+  manager-team API (`entry/{id}/`, `entry/{id}/event/{gw}/picks/`).
 - **`agent.py`** -- the LangGraph agent (`claude-opus-5`). Two tools,
   `get_gameweek_report` and `get_team_squad_predictions`, both thin wrappers
   over `data.py` -- the model never estimates a probability or a score

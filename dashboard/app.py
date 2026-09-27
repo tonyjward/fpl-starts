@@ -28,7 +28,7 @@ st.title("P(starts) dashboard")
 
 SOURCES = {"Registered snapshot": data.SOURCE_REGISTERED, "Live (frozen model, current inputs)": data.SOURCE_LIVE}
 PLAYER_TABLE = ["web_name", "team", "gameweek", "p_start", "availability_status", "last_gw_role",
-                "current_season_start_rate", "previous_season_start_rate", "top_positive", "top_negative"]
+                "current_season_start_rate", "previous_season_start_rate"]
 SQUAD_COLUMNS = ["code", "web_name", "team", "position", "full_name"]
 TEAM_ID_HELP = ("**Where do I find my team ID?** Open your FPL **Points** page on "
                 "[fantasy.premierleague.com](https://fantasy.premierleague.com) and look at the URL. "
@@ -162,7 +162,7 @@ with tab_predictions:
             meta["model_id"], meta["source"], meta["gameweek"], meta["prediction_cutoff"],
             "" if meta["predicted_at"] is None else " | predicted {0}{1}".format(
                 meta["predicted_at"], " (after deadline)" if meta["generated_after_deadline"] else "")))
-        players = data.with_top_factors(predictions).sort_values("p_start", ascending=False)
+        players = predictions.players.sort_values("p_start", ascending=False)
         st.dataframe(players[PLAYER_TABLE].round(3), use_container_width=True, hide_index=True)
         if missing:
             st.warning("No prediction for: {0}".format(", ".join(squad.describe(p) for p in missing)))

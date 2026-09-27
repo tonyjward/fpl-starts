@@ -373,7 +373,14 @@ def test_dashboard_reads_players_and_last_gameweek_from_derived_db(setup, dashbo
     players = dashboard_data.load_player_universe()
     assert sorted(players) == CODES
     assert players[1000] == {"code": 1000, "element": 1, "web_name": "Player0", "full_name": "First0 Player0",
-                             "known_name": "", "second_name": "Player0", "team": "Alpha", "position": "DEF"}
+                             "display_name": "First0 Player0", "known_name": "", "second_name": "Player0",
+                             "team": "Alpha", "position": "DEF"}
+    conn = sqlite3.connect(setup["db"])
+    conn.execute("UPDATE players SET known_name = 'Known Nought' WHERE code = 1000")
+    conn.commit()
+    conn.close()
+    renamed = dashboard_data.load_player_universe()[1000]
+    assert renamed["display_name"] == "Known Nought" and renamed["full_name"] == "First0 Player0"
     assert players[1005]["position"] == "MID" and players[1005]["team"] == "Bravo"
     assert dashboard_data.last_completed_gameweek(SEASON) == 4
     assert dashboard_data.last_completed_gameweek("2030-31") is None

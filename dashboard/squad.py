@@ -37,7 +37,7 @@ CURRENT_SQUAD_READY = "CURRENT_SQUAD_READY"
 SQUAD_STATE_KEYS = [
     "team_id", "team_id_validated", "team_name", "manager_name", "official_squad", "last_completed_gameweek",
     "transfer_overrides", "raw_transfer_messages", "transfer_state_confirmed", "current_squad",
-    "predictions", "pred_player", "chat_history",
+    "predictions", "predictions_version", "pred_player", "chat_history", "bank", "bank_override", "refresh_message", "agent", "chat",
     # widget values, so nothing typed for one team is shown for the next
     "team_id_input", "transfer_input",
 ]
@@ -131,7 +131,8 @@ def _matches(query, players):
 
 
 def describe(player):
-    return "{0} ({1}, {2})".format(player["full_name"], player["team"], player["position"])
+    return "{0} ({1}, {2})".format(player.get("display_name") or player["full_name"], player["team"],
+                                   player["position"])
 
 
 def _suggestions(query, universe):
@@ -284,7 +285,8 @@ def load_official_squad(state, universe, gw, fetch_team_picks):
     if gw is None:
         return "No gameweek has finished yet this season, so there's no official squad to start from."
     try:
-        picks = fetch_team_picks(state["team_id"], gw)["picks"]
+        payload = fetch_team_picks(state["team_id"], gw)
+        picks = payload["picks"]
     except requests.HTTPError as exc:
         if exc.response is not None and exc.response.status_code == 404:
             return "Team {0} has no squad for gameweek {1} (it may have been created after it).".format(
@@ -305,6 +307,9 @@ def load_official_squad(state, universe, gw, fetch_team_picks):
         squad.append(player)
     state["official_squad"] = tuple(squad)
     state["last_completed_gameweek"] = gw
+    # Money in the bank at the end of `gw` (tenths of £1m) -- public, but it
+    # can't include transfers made since, or selling prices (see tools.py).
+    state["bank"] = (payload.get("entry_history") or {}).get("bank")
     reset_transfers(state)
     return None
 

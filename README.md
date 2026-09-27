@@ -89,6 +89,18 @@ uv run fpl-starts-logistic-predict --target-round N     # frozen-model forecast 
 uv run fpl-starts-derive                                # rebuild again, to pick up predictions
 ```
 
+Or, for the upcoming gameweek in one step (also what the dashboard's
+"Check for latest FPL news" runs):
+
+```
+uv run fpl-starts-refresh      # latest FPL availability -> rebuild -> new forecast if any chance changed
+```
+
+It only runs before the upcoming gameweek's deadline, at most once every 30
+minutes (`--cooldown-minutes`), and registers a new forecast snapshot only
+when a player's chance of starting changed. Forecasts use availability
+captured up to the deadline.
+
 ### After the gameweek
 
 ```

@@ -84,8 +84,9 @@ def db_version():
 
 def load_player_universe():
     """{code: player} for every player in derived.db: FPL element id, web
-    name, full name, club and position, as of the latest archived
-    bootstrap-static."""
+    name, full name, the name to show (FPL's known name, e.g. "Rúben Dias",
+    when it has one, else first + last name), club and position, as of the
+    latest archived bootstrap-static."""
     conn = _connect_db()
     try:
         rows = conn.execute(
@@ -100,13 +101,43 @@ def load_player_universe():
     for code, element, web_name, first, second, known, team, element_type in rows:
         if element_type not in POSITIONS:
             continue
+        full_name = " ".join(n for n in (first, second) if n) or web_name
         universe[int(code)] = {
             "code": int(code), "element": int(element), "web_name": web_name,
-            "full_name": " ".join(n for n in (first, second) if n) or web_name,
+            "full_name": full_name, "display_name": known or full_name,
             "known_name": known or "", "second_name": second or web_name,
             "team": team, "position": POSITIONS[element_type],
         }
     return universe
+
+
+def load_player_status(season=spec.PROSPECTIVE_SEASON):
+    """{code: latest price/status/news} from the most recent archived
+    bootstrap-static capture in derived.db: now_cost (tenths of £1m), FPL
+    status flag, chance_of_playing_next_round, news, news_added, fetched_at."""
+    conn = _connect_db()
+    try:
+        rows = conn.execute(
+            "SELECT s.code, s.now_cost, s.status, s.chance_of_playing_next_round, s.news, s.news_added, s.fetched_at "
+            "FROM player_availability_snapshots s WHERE s.season = ? AND s.fetched_at = "
+            "(SELECT MAX(fetched_at) FROM player_availability_snapshots WHERE season = ?)", (season, season)).fetchall()
+    finally:
+        conn.close()
+    return {int(code): {"now_cost": cost, "status": flag, "chance_of_playing_next_round": chance,
+                        "news": news or "", "news_added": added, "fetched_at": fetched}
+            for code, cost, flag, chance, news, added, fetched in rows}
+
+
+def data_as_of(season=spec.PROSPECTIVE_SEASON):
+    """When our FPL data was last captured from FPL (UTC, "YYYYMMDDTHHMMSSZ"),
+    or None if never."""
+    conn = _connect_db()
+    try:
+        (fetched,) = conn.execute("SELECT MAX(fetched_at) FROM player_availability_snapshots WHERE season = ?",
+                                  (season,)).fetchone()
+    finally:
+        conn.close()
+    return fetched
 
 
 def last_completed_gameweek(season=spec.PROSPECTIVE_SEASON):
@@ -119,6 +150,15 @@ def last_completed_gameweek(season=spec.PROSPECTIVE_SEASON):
     finally:
         conn.close()
     return None if gw is None else int(gw)
+
+
+def refresh_fpl_data():
+    """Refresh our FPL data, and the upcoming forecast before its deadline --
+    see fpl_starts.refresh. Returns its RefreshResult."""
+    from fpl_starts import refresh
+
+    return refresh.refresh(base_dir=RAW_DIR, db_path=FPL_STARTS_DB_PATH, predictions_dir=PREDICTIONS_DIR,
+                           models_dir=MODELS_DIR, data_dir=DATA_DIR)
 
 
 def load_frozen_model():

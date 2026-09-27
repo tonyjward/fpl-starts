@@ -27,18 +27,30 @@ SEASON = "2026-27"
 PRIOR_SEASON = "2025-26"
 MODEL = "claude-opus-5"
 
-SYSTEM_PROMPT = """You explain Fantasy Premier League P(starts) predictions \
-and gameweek performance to the person you're talking to. The P(starts) \
-model is logistic_availability_v1, a frozen, interpretable logistic \
-regression. You have two tools: one reads how the model scored for a given \
-gameweek (Brier score and accuracy, stratified by Core/Rotation/Marginal/Deep -- \
-lower Brier is better, and never quote a single pool-wide number as if it \
-were the whole story, since Deep players are trivially predictable and \
-dominate any pool average); the other returns a 15-player squad -- the \
-user's current squad, including transfers they've told the app about, or \
-(from the command line) a manager's squad by team ID and gameweek -- with the \
-model's p_start, availability status, last-gameweek role and start rates for \
-each player.
+SYSTEM_PROMPT = """You help a Fantasy Premier League manager with one \
+question: who is likely to start. The predictions come from \
+logistic_availability_v1, a frozen, interpretable logistic regression, and \
+each is explained against a regular starter (available and starting every \
+week). Your tools cover: the manager's current squad (their official squad \
+from the last completed gameweek plus the transfers they've told the app \
+about); any player's chance of starting and why; starting-XI risks with \
+legal bench swaps; replacements likely to start, by position and budget; \
+FPL's own injury/suspension news and whether it changed since the forecast; \
+refreshing our FPL data (and, before the deadline, the forecast); and how \
+the model scored in past gameweeks (Brier score and accuracy by \
+Core/Rotation/Marginal/Deep -- lower is better; never quote the pool-wide \
+number alone, since Deep players are trivially predictable).
+
+You can only speak to chance of starting. You have no model of points, \
+form, fixtures' difficulty or value: if asked who to captain, who will score \
+or which transfer is "best", say plainly that you can tell them who's likely \
+to start, not who'll score -- then offer what you can (e.g. which options are \
+nailed-on). Budgets: FPL doesn't publish selling prices, so the bank is an \
+estimate unless the user tells you theirs; if they do, pass it to the \
+replacements tool. Every tool answer states when our FPL data is from; \
+mention it when news or prices matter. If the user thinks our news is out \
+of date, use the refresh tool (it only works before the deadline, and not \
+more than every 30 minutes).
 
 Never estimate a probability or a score yourself -- every number you state \
 must come from a tool call in this conversation, not from your own \
@@ -97,10 +109,14 @@ def get_team_squad_predictions(team_id: int, event: int) -> str:
     return squad.round(4).to_string(index=False)
 
 
-def make_current_squad_tool(get_report):
-    """A tool returning the app user's current squad -- official squad at
-    the end of the last completed gameweek plus the transfers they've told
-    the app about -- via `get_report()`, called at tool-call time."""
+def make_app_tools(get_report, get_context, refresh_and_report):
+    """The app's session tools. Each calls back into the session when the
+    model uses it -- `get_report()` for the squad report, `get_context()`
+    for a tools.Context on the current data, `refresh_and_report()` for a
+    refresh -- so they always see the current squad and data without the
+    agent being rebuilt."""
+    import tools as session_tools
+
     @tool
     def get_my_current_squad_predictions() -> str:
         """The user's current FPL squad (their official squad from the last
@@ -112,7 +128,59 @@ def make_current_squad_tool(get_report):
         squad or its predictions aren't ready yet.
         """
         return get_report()
-    return get_my_current_squad_predictions
+
+    @tool
+    def explain_player(name: str) -> str:
+        """Any player's chance of starting in the upcoming gameweek (in the
+        user's squad or not), what's holding him back compared with a regular
+        starter, his price and FPL status/news. `name` as the user said it
+        (e.g. "Cole Palmer", "Bruno"). Asks for clarification if the name is
+        ambiguous -- relay that question to the user.
+        """
+        return session_tools.explain_player(get_context(), name)
+
+    @tool
+    def squad_risks(threshold: float = 0.75) -> str:
+        """Starting-XI players whose chance of starting is below `threshold`
+        (0-1, default 0.75), why, and bench players who are more likely to
+        start and could come in while keeping a legal formation. Use for
+        "who should I worry about?" or "should I change my bench?".
+        """
+        return session_tools.squad_risks(get_context(), threshold)
+
+    @tool
+    def find_replacements(replacing: str = None, position: str = None, max_price: float = None,
+                          bank: float = None, min_chance: float = 0.75) -> str:
+        """Players likely to start (chance >= `min_chance`, 0-1) who aren't
+        in the user's squad. Give `replacing` (a squad player's name) to use
+        his position and budget (his price + the bank); or `position`
+        ("goalkeeper", "defender", "midfielder", "forward") and optionally
+        `max_price` in £m. Pass `bank` (£m) if the user tells you how much
+        they have -- it's remembered. Respects the 3-per-club limit.
+        """
+        return session_tools.find_replacements(get_context(), replacing=replacing, position=position,
+                                                max_price=max_price, bank=bank, min_chance=min_chance)
+
+    @tool
+    def player_news(name: str = None) -> str:
+        """FPL's own status and injury/suspension news for one player
+        (`name`), or with no name for every squad player with news or whose
+        status has changed since the forecast was made.
+        """
+        return session_tools.player_news(get_context(), name)
+
+    @tool
+    def refresh_fpl_data() -> str:
+        """Fetch the latest FPL data (status, news, prices) and, before the
+        upcoming gameweek's deadline, update the forecast; then report what
+        changed for the user's squad. Use when the user asks whether their
+        information is up to date or suspects news is missing. Refused after
+        the deadline or within 30 minutes of the last refresh.
+        """
+        return refresh_and_report()
+
+    return [get_my_current_squad_predictions, explain_player, squad_risks, find_replacements, player_news,
+            refresh_fpl_data]
 
 
 def extract_text(content):
@@ -131,17 +199,17 @@ def extract_text(content):
     )
 
 
-def build_agent(squad_tool=None):
-    """`squad_tool` (e.g. from make_current_squad_tool) replaces the
-    team-ID squad tool -- the app passes one so chat uses the user's current
-    squad, transfers included."""
+def build_agent(app_tools=None):
+    """`app_tools` (from make_app_tools) replace the command-line team-ID
+    squad tool -- the app passes them so chat works on the user's current
+    squad and session."""
     # An API key that isn't scoped to a single workspace needs this header on
     # every request (confirmed live -- omitting it 400s), a key that *is*
     # scoped doesn't need or accept it being wrong, so only send it when set.
     workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
     default_headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
     llm = ChatAnthropic(model=MODEL, max_tokens=8000, default_headers=default_headers)
-    tools = [get_gameweek_report, squad_tool or get_team_squad_predictions]
+    tools = [get_gameweek_report] + list(app_tools or [get_team_squad_predictions])
     return create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
 
 

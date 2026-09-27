@@ -24,13 +24,14 @@ from fpl_starts import explanation
 
 import data
 import squad
-from agent import SEASON, build_agent, extract_text, make_current_squad_tool
+import tools
+from agent import SEASON, build_agent, extract_text, make_app_tools
 
 st.set_page_config(page_title="Who's likely to start?", layout="wide")
 st.title("Who's likely to start?")
 
 PLAYER_TABLE = {  # field -> heading
-    "web_name": "Player", "team": "Team", "p_start": "Chance of starting",
+    "full_name": "Player", "team": "Team", "p_start": "Chance of starting",
     "availability_status": "Availability", "last_gw_role": "Last GW",
     "current_season_start_rate": "Start rate (this season)", "previous_season_start_rate": "Start rate (last season)",
 }
@@ -52,16 +53,66 @@ TEAM_ID_HELP = ("**Where do I find my team ID?** Open your FPL **Points** page o
                 "Example: `fantasy.premierleague.com/entry/1234567/event/1`")
 
 
-@st.cache_data(ttl=300)
-def latest_forecast(season, target_round):
+# Everything read from derived.db or predictions/ is cached per database
+# version: a rebuild (e.g. after a refresh) replaces the file, so the next
+# read picks up the new data.
+@st.cache_data
+def latest_forecast(season, target_round, db_version):
     """The latest registered forecast for `target_round`, read-only."""
     return data.load_gameweek_predictions(season, target_round, data.SOURCE_REGISTERED)
 
 
 @st.cache_data
 def player_universe(db_version):
-    """The player list from derived.db, re-read whenever it's rebuilt."""
+    """The player list from derived.db."""
     return data.load_player_universe()
+
+
+@st.cache_data
+def player_status(db_version):
+    """Each player's latest price, FPL status and news from derived.db."""
+    return data.load_player_status()
+
+
+@st.cache_data
+def data_as_of(db_version):
+    return data.data_as_of()
+
+
+# Session keys the tools may change, copied back into the session afterwards:
+# a bank the user told the chat, and the forecast reloaded after a refresh.
+TOOL_WRITES = ("bank_override", "predictions")
+
+
+def tools_context():
+    """A snapshot of this session and the current data for the tools, built
+    here on the script thread. LangGraph runs tool calls in worker threads,
+    where Streamlit's session state and caching aren't available, so the
+    tools only ever touch this snapshot; `keep_tool_writes` copies what they
+    changed back into the session."""
+    version = data.db_version()
+    return tools.Context(state=dict(st.session_state), universe=player_universe(version),
+                         status=player_status(version), data_as_of=data_as_of(version))
+
+
+def keep_tool_writes(ctx):
+    for key in TOOL_WRITES:
+        if key in ctx.state:
+            st.session_state[key] = ctx.state[key]
+
+
+def refresh_and_report(ctx):
+    """Refresh our FPL data (and the forecast, before the deadline), reload
+    the forecast into `ctx`, and describe what changed for the squad. Safe
+    on a worker thread: no Streamlit calls."""
+    def reload():
+        try:
+            ctx.state["predictions"] = data.load_gameweek_predictions(SEASON, ctx.state["last_completed_gameweek"] + 1)
+        except Exception:  # noqa: BLE001 -- the Predictions tab shows the error
+            ctx.state["predictions"] = None
+        return tools.Context(state=ctx.state, universe=data.load_player_universe(),
+                             status=data.load_player_status(), data_as_of=data.data_as_of())
+    return tools.refresh_data(ctx, data.refresh_fpl_data, reload)
 
 
 def presentable(frame, columns):
@@ -160,24 +211,45 @@ tab_predictions, tab_chat = st.tabs(["Predictions", "Ask the agent"])
 with tab_predictions:
     next_gw = last_gw + 1
     st.subheader("How likely is each of your players to start in gameweek {0}?".format(next_gw))
-    if state.get("predictions") is None:
+    info, button = st.columns([4, 1])
+    info.caption("FPL data as of {0}.".format(tools.when(data_as_of(data.db_version()))))
+    if button.button("Check for latest FPL news", key="refresh_data",
+                     help="Fetches FPL's latest injury news and, before the deadline, updates the forecast. "
+                          "Everyone sees the refreshed data; at most once every 30 minutes."):
+        with st.spinner("Checking FPL for the latest news..."):
+            try:
+                ctx = tools_context()
+                state.refresh_message = refresh_and_report(ctx)
+                keep_tool_writes(ctx)
+            except Exception as exc:  # noqa: BLE001 -- shown to the user, not a crash
+                state.refresh_message = "Couldn't refresh from FPL right now: {0}".format(exc)
+        st.rerun()
+    if state.get("refresh_message"):
+        st.info(state.pop("refresh_message"))
+    # Reload whenever derived.db has been rebuilt -- e.g. anyone's refresh
+    # registered a new forecast -- not only on this session's first load.
+    version = data.db_version()
+    if state.get("predictions") is None or state.get("predictions_version") != version:
         try:
-            state.predictions = latest_forecast(SEASON, next_gw)
+            state.predictions = latest_forecast(SEASON, next_gw, version)
+            state.predictions_version = version
         except Exception as exc:  # noqa: BLE001 -- shown to the user, not a crash
             st.error(str(exc))
 
     if state.get("predictions") is not None:
         predictions, missing = squad.squad_predictions(state.predictions, current_squad)
         meta = predictions.metadata
-        st.caption("Latest forecast from {0}, made {1}.".format(
-            meta["model_id"], pd.Timestamp(meta["predicted_at"]).strftime("%d %b %Y %H:%M UTC")))
+        st.caption("Latest forecast from {0}, made {1}.".format(meta["model_id"], tools.when(meta["predicted_at"])))
         players = predictions.players.sort_values("p_start", ascending=False)
+        players = players.assign(full_name=[
+            (universe[c].get("display_name") or universe[c].get("full_name") or w) if c in universe else w
+            for c, w in zip(players["code"], players["web_name"])])
         st.dataframe(presentable(players, PLAYER_TABLE), column_config=PERCENT_FORMAT,
                      use_container_width=True, hide_index=True)
         if missing:
             st.warning("No prediction for: {0}".format(", ".join(squad.describe(p) for p in missing)))
 
-        labels = dict(zip(players["web_name"].fillna(players["code"].astype(str)) + " (" +
+        labels = dict(zip(players["full_name"].fillna(players["code"].astype(str)) + " (" +
                           players["team"].fillna("?") + ")", players["code"]))
         chosen = st.selectbox("Explain a player", list(labels), key="pred_player")
         if chosen:
@@ -205,9 +277,13 @@ with tab_chat:
                    "needs it (or an `ant auth login` profile) to run.")
 
     if "agent" not in state:
-        # The squad tool reads session state when called, so it always sees
-        # the current squad (and a changed team) without rebuilding the agent.
-        state.agent = build_agent(squad_tool=make_current_squad_tool(lambda: squad.current_squad_report(state)))
+        # The tools read `chat["ctx"]`, a fresh snapshot set before every
+        # question (see tools_context), so they always see the current squad,
+        # transfers and data without the agent being rebuilt.
+        chat = state.chat = {}
+        state.agent = build_agent(app_tools=make_app_tools(
+            lambda: squad.current_squad_report(chat["ctx"].state), lambda: chat["ctx"],
+            lambda: refresh_and_report(chat["ctx"])))
     if "chat_history" not in state:
         state.chat_history = []
 
@@ -222,7 +298,14 @@ with tab_chat:
             st.markdown(question)
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
+                version_before = data.db_version()
+                state.chat["ctx"] = tools_context()
                 result = state.agent.invoke({"messages": [{"role": "user", "content": question}]})
+                keep_tool_writes(state.chat["ctx"])
                 answer = extract_text(result["messages"][-1].content)
             st.markdown(answer)
         state.chat_history.append({"role": "assistant", "content": answer})
+        if data.db_version() != version_before:
+            # A refresh rebuilt the data after the Predictions tab was drawn
+            # on this run -- draw the page again so it shows the new forecast.
+            st.rerun()

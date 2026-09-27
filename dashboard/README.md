@@ -59,6 +59,15 @@ playing-time groups are shown as one. A missing model, missing inputs or a
 gameweek with no prediction is an error on screen; there is no fallback to
 any other model.
 
+## Keeping the data fresh
+
+"Check for latest FPL news" (and the chat's refresh tool) runs
+`fpl_starts.refresh`: fetch FPL's latest availability once, archive it, rebuild
+`derived.db` atomically and, if a player's chance of starting changed,
+register a new forecast -- for everyone using the app. Only before the
+upcoming gameweek's deadline, and at most every 30 minutes. It writes to
+`raw/`, `db/` and `predictions/`, so the app needs a writable disk.
+
 ## Your squad first
 
 The app opens by asking for your FPL team ID, checks it exists (FPL's
@@ -82,11 +91,18 @@ team.
   list and last completed gameweek from `db/derived.db`, scoring via
   `fpl_starts.scoring` (never a write), and the public, unauthenticated FPL
   manager-team API (`entry/{id}/`, `entry/{id}/event/{gw}/picks/`).
-- **`agent.py`** -- the LangGraph agent (`claude-opus-5`). Two tools,
-  `get_gameweek_report` and `get_team_squad_predictions`, both thin wrappers
-  over `data.py` -- the model never estimates a probability or a score
-  itself, same discipline as `fpl-starts`'s own agent challenger. `uv run
+- **`agent.py`** -- the LangGraph agent (`claude-opus-5`). In the app its
+  tools work on the user's session: their current squad, **explain any
+  player**, **squad risks** (starters unlikely to start, and bench swaps that
+  keep a legal formation), **replacements** likely to start by position and
+  budget (the bank is an estimate unless the user gives theirs; 3-per-club
+  limit), **FPL news** (and whether it changed since the forecast),
+  **refresh**, and past gameweek scores. Every answer states when our FPL
+  data is from. The model never estimates a number itself, and declines
+  points/captaincy questions -- it only knows who's likely to start. `uv run
   python agent.py "your question"` for a quick CLI check outside Streamlit.
+- **`tools.py`** -- those tools, framework-agnostic, as plain functions over
+  the session and derived.db.
 - **`squad.py`** -- the onboarding state machine (`NO_TEAM` ->
   `TEAM_ID_VALID` -> `OFFICIAL_SQUAD_LOADED` -> `TRANSFER_STATE_CONFIRMED` ->
   `CURRENT_SQUAD_READY`), transfer parsing and player-name resolution, and

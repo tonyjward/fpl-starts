@@ -215,10 +215,15 @@ def _chat_order(block):
     return order
 
 
-def test_the_chat_input_stays_below_the_latest_message(fake_fpl, scripted_llm):
+def test_the_chat_input_is_pinned_below_the_conversation(fake_fpl, scripted_llm):
+    """The input is pinned to the bottom of the window -- outside the page body
+    -- and each question and answer appear in order in the conversation."""
     scripted_llm("squad_risks")
     at = _ready_for_chat()
+    assert len(at.chat_input) == 1 and "ChatInput" not in _chat_order(at.main)  # pinned, not in the page
     at.chat_input[0].set_value("Who's at risk?").run()  # the run that answers
-    assert _chat_order(at.main) == ["ChatMessage", "ChatMessage", "ChatInput"]
+    assert _chat_order(at.main) == ["ChatMessage", "ChatMessage"]
+    assert [m.name for m in at.chat_message] == ["user", "assistant"]
     at.chat_input[0].set_value("And now?").run()
-    assert _chat_order(at.main) == ["ChatMessage"] * 4 + ["ChatInput"]
+    assert [m.name for m in at.chat_message] == ["user", "assistant"] * 2
+    assert len(at.chat_input) == 1 and "ChatInput" not in _chat_order(at.main)

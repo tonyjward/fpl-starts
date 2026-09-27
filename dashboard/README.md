@@ -109,10 +109,11 @@ team.
   selecting the current squad's rows from `fpl_starts.pstart` output.
   Framework-agnostic: it works on any mapping, `st.session_state` or a dict.
 - **`app.py`** -- the onboarding steps, then the current squad's page:
-  predictions on the left (chance of starting, availability, last-GW role,
+  predictions (chance of starting, availability, last-GW role,
   start rates, and a per-player breakdown of what's holding him back
-  compared with a regular starter), and the chat beside them on the right,
-  always in view (stacked below on a phone).
+  compared with a regular starter) across the full width, then the chat
+  below them, with its input pinned to the bottom of the window so it's
+  always in view.
 
 ## What this doesn't do (yet)
 

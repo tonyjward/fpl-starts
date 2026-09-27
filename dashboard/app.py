@@ -206,10 +206,11 @@ current_squad = state["current_squad"]
 
 # --- predictions for the current squad ----------------------------------------------------
 
-# Side by side, so the chat is always in view (it stacks below on a phone).
-predictions_column, chat_column = st.columns([3, 2], gap="large")
+# Full-width predictions, then the conversation below them, with the chat
+# input pinned to the bottom of the window (see below) so it's always in view.
+predictions_area, chat_area = st.container(), st.container()
 
-with predictions_column:
+with predictions_area:
     next_gw = last_gw + 1
     st.subheader("How likely is each of your players to start in gameweek {0}?".format(next_gw))
     info, button = st.columns([4, 1])
@@ -271,7 +272,8 @@ with predictions_column:
                     for p, g in zip(rows["p_start_if_nailed_on"], rows["gap"])],
             }), use_container_width=True, hide_index=True)
 
-with chat_column:
+with chat_area:
+    st.divider()
     st.subheader("Ask about your squad")
     st.caption("For example: who's at risk in my team? Is Palmer fit? Who could replace Greaves for £5m? "
                "Is our data up to date?")
@@ -290,32 +292,33 @@ with chat_column:
     if "chat_history" not in state:
         state.chat_history = []
 
-    # Inside a tab the chat input isn't pinned to the bottom of the page -- it
-    # sits where it's drawn. So the conversation goes in a container drawn
-    # above it, and a new question and answer are written into that
-    # container, keeping the input box below the latest message.
+    # The conversation so far; a new question and answer are written into
+    # this container too, so they appear in order below the earlier ones.
     conversation = st.container()
     with conversation:
         for message in state.chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-    question = st.chat_input("e.g. \"Who's at risk in my squad?\" or \"Is Palmer fit?\"")
-    if question:
-        state.chat_history.append({"role": "user", "content": question})
-        with conversation:
-            with st.chat_message("user"):
-                st.markdown(question)
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    version_before = data.db_version()
-                    state.chat["ctx"] = tools_context()
-                    result = state.agent.invoke({"messages": [{"role": "user", "content": question}]})
-                    keep_tool_writes(state.chat["ctx"])
-                    answer = extract_text(result["messages"][-1].content)
-                st.markdown(answer)
-        state.chat_history.append({"role": "assistant", "content": answer})
-        if data.db_version() != version_before:
-            # A refresh rebuilt the data after the Predictions tab was drawn
-            # on this run -- draw the page again so it shows the new forecast.
-            st.rerun()
+# Called at the top level of the page (not inside a container, column or tab),
+# st.chat_input is pinned to the bottom of the window -- always visible,
+# however far down the user has scrolled.
+question = st.chat_input("e.g. \"Who's at risk in my squad?\" or \"Is Palmer fit?\"")
+if question:
+    state.chat_history.append({"role": "user", "content": question})
+    with conversation:
+        with st.chat_message("user"):
+            st.markdown(question)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                version_before = data.db_version()
+                state.chat["ctx"] = tools_context()
+                result = state.agent.invoke({"messages": [{"role": "user", "content": question}]})
+                keep_tool_writes(state.chat["ctx"])
+                answer = extract_text(result["messages"][-1].content)
+            st.markdown(answer)
+    state.chat_history.append({"role": "assistant", "content": answer})
+    if data.db_version() != version_before:
+        # A refresh rebuilt the data after the predictions were drawn on this
+        # run -- draw the page again so they show the new forecast.
+        st.rerun()

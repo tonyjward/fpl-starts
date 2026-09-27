@@ -26,8 +26,18 @@ def _submit_transfers(at, text):
     return at.run()
 
 
+def _table(at, column):
+    """The first dataframe on the page with `column` -- found by content, not
+    position, so layout changes don't break the tests."""
+    return next((d.value for d in at.dataframe if column in d.value.columns), None)
+
+
 def _predictions_table(at):
-    return at.tabs[0].dataframe[0].value
+    return _table(at, "Chance of starting")
+
+
+def _main_page_shown(at):
+    return _predictions_table(at) is not None or len(at.chat_input) > 0
 
 
 def test_team_id_is_the_first_interaction(fake_fpl):
@@ -36,7 +46,7 @@ def test_team_id_is_the_first_interaction(fake_fpl):
     assert box.label == "What is your FPL team ID?"
     assert box.placeholder == "e.g. 1234567" and box.value == ""
     assert any("Where do I find my team ID?" in c.value for c in at.caption)
-    assert len(at.tabs) == 0 and not fake_fpl
+    assert not _main_page_shown(at) and not fake_fpl
 
 
 def test_invalid_team_id_stays_on_the_team_id_step(fake_fpl):
@@ -45,7 +55,7 @@ def test_invalid_team_id_stays_on_the_team_id_step(fake_fpl):
     assert at.text_input(key="team_id_input") is not None
     assert "team_id_validated" not in at.session_state
     assert "official_squad" not in at.session_state
-    assert len(at.tabs) == 0 and not fake_fpl
+    assert not _main_page_shown(at) and not fake_fpl
     assert not any(w.key == "transfer_input" for w in at.text_input)
 
 
@@ -55,7 +65,7 @@ def test_happy_path_no_transfers(fake_fpl):
     assert at.session_state["last_completed_gameweek"] == fakes.LAST_COMPLETED_GW
     assert squad.FRESHNESS_MESSAGE in [i.value for i in at.info]
     assert not any(w.key == "team_id_input" for w in at.text_input)
-    assert len(at.tabs) == 0 and not fake_fpl  # no predictions before the transfer step
+    assert not _main_page_shown(at) and not fake_fpl  # no predictions before the transfer step
 
     at = _submit_transfers(at, "No changes")
     assert at.session_state["transfer_state_confirmed"] is True
@@ -64,19 +74,20 @@ def test_happy_path_no_transfers(fake_fpl):
                                              for e in fakes.SQUAD_ELEMENTS)
     assert {"Bukayo Saka", "Bruno Fernandes"} <= set(table["Player"])  # not FPL's web names "Saka", "B.Fernandes"
     assert fake_fpl == [("2026-27", fakes.LAST_COMPLETED_GW + 1, "registered_snapshot")]
-    assert len(at.tabs[0].radio) == 0 and len(at.tabs[0].number_input) == 0  # no source/gameweek options
-    captions = [c.value for c in at.tabs[0].caption]
+    assert len(at.radio) == 0 and len(at.number_input) == 0  # no source/gameweek options
+    captions = [c.value for c in at.caption]
     assert captions[0] == "FPL data as of 21 Sep 2026, 15:54 UTC."
     assert any(c.startswith("Latest forecast from logistic_availability_v1") for c in captions)
 
-    breakdown = at.tabs[0].dataframe[1].value  # the selected player's grouped explanation
+    breakdown = _table(at, "Factor")  # the selected player's grouped explanation
     assert list(breakdown.columns) == ["Factor", "What we know", "Impact", "Chance without this issue"]
-    assert at.tabs[0].markdown[0].value.startswith("**Chance of starting:")
-    assert any("A regular starter" in c.value for c in at.tabs[0].caption)
+    assert any(m.value.startswith("**Chance of starting:") for m in at.markdown)
+    assert any("A regular starter" in c.value for c in at.caption)
 
     at.run()  # a plain rerun keeps the validated team
     assert not any(w.key == "team_id_input" for w in at.text_input)
-    assert [t.label for t in at.tabs] == ["Predictions", "Ask the agent"]
+    assert _predictions_table(at) is not None and len(at.chat_input) == 1  # both always in view
+    assert any(h.value == "Ask about your squad" for h in at.subheader)
 
 
 def test_transfer_changes_every_prediction_view(fake_fpl):
@@ -91,7 +102,7 @@ def test_rejected_transfer_keeps_the_squad_step(fake_fpl):
     at = _submit_team_id(_start(), str(fakes.VALID_TEAM_ID))
     at = _submit_transfers(at, "João Pedro out for Palmer")
     assert any("could be more than one player" in w.value for w in at.warning)
-    assert len(at.tabs) == 0 and "transfer_overrides" in at.session_state
+    assert not _main_page_shown(at) and "transfer_overrides" in at.session_state
     assert at.session_state["transfer_overrides"] == []
 
 
@@ -101,7 +112,7 @@ def test_change_team_returns_to_the_team_id_step(fake_fpl):
     at.button(key="change_team").click()
     at.run()
     box = at.text_input(key="team_id_input")
-    assert box.value == "" and len(at.tabs) == 0
+    assert box.value == "" and not _main_page_shown(at)
     for key in ("team_id", "official_squad", "transfer_overrides", "current_squad", "predictions"):
         assert key not in at.session_state
 
@@ -122,8 +133,8 @@ def test_refresh_button_reports_the_outcome(fake_fpl, monkeypatch):
     at.button(key="refresh_data").click()
     at.run()
     assert calls == [1]
-    assert any("Our FPL data was refreshed at 21 Sep 15:54 UTC." in i.value for i in at.tabs[0].info)
-    assert len(at.tabs[0].dataframe) >= 1  # predictions still shown
+    assert any("Our FPL data was refreshed at 21 Sep 15:54 UTC." in i.value for i in at.info)
+    assert _predictions_table(at) is not None  # predictions still shown
 
 
 def _ready_for_chat():
@@ -208,6 +219,6 @@ def test_the_chat_input_stays_below_the_latest_message(fake_fpl, scripted_llm):
     scripted_llm("squad_risks")
     at = _ready_for_chat()
     at.chat_input[0].set_value("Who's at risk?").run()  # the run that answers
-    assert _chat_order(at.tabs[1]) == ["ChatMessage", "ChatMessage", "ChatInput"]
+    assert _chat_order(at.main) == ["ChatMessage", "ChatMessage", "ChatInput"]
     at.chat_input[0].set_value("And now?").run()
-    assert _chat_order(at.tabs[1]) == ["ChatMessage"] * 4 + ["ChatInput"]
+    assert _chat_order(at.main) == ["ChatMessage"] * 4 + ["ChatInput"]

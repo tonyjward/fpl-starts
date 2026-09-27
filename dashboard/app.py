@@ -5,14 +5,14 @@
 
 The squad is established first (squad.py): team ID -> validated against the
 FPL API -> official squad at the end of the last completed gameweek ->
-transfers made since then -> effective current squad. Only then are the
-tabs shown: per-player predictions with their explanations, the squad view,
-gameweek performance, and a LangGraph agent chat -- all for the current
-squad.
+transfers made since then -> effective current squad. Only then is the main
+page shown, for the current squad: per-player predictions with their
+explanations on the left, and a LangGraph agent chat beside them on the
+right.
 
 Read-only against derived.db, predictions/ and the public FPL API -- see
 data.py's module docstring. Requires ANTHROPIC_API_KEY (or an `ant auth
-login` profile) for the chat tab only.
+login` profile) for the chat only.
 """
 
 import os
@@ -206,9 +206,10 @@ current_squad = state["current_squad"]
 
 # --- predictions for the current squad ----------------------------------------------------
 
-tab_predictions, tab_chat = st.tabs(["Predictions", "Ask the agent"])
+# Side by side, so the chat is always in view (it stacks below on a phone).
+predictions_column, chat_column = st.columns([3, 2], gap="large")
 
-with tab_predictions:
+with predictions_column:
     next_gw = last_gw + 1
     st.subheader("How likely is each of your players to start in gameweek {0}?".format(next_gw))
     info, button = st.columns([4, 1])
@@ -270,8 +271,10 @@ with tab_predictions:
                     for p, g in zip(rows["p_start_if_nailed_on"], rows["gap"])],
             }), use_container_width=True, hide_index=True)
 
-with tab_chat:
-    st.subheader("Ask about a gameweek or your squad")
+with chat_column:
+    st.subheader("Ask about your squad")
+    st.caption("For example: who's at risk in my team? Is Palmer fit? Who could replace Greaves for £5m? "
+               "Is our data up to date?")
     if not os.environ.get("ANTHROPIC_API_KEY"):
         st.warning("ANTHROPIC_API_KEY isn't set in this environment -- the chat agent "
                    "needs it (or an `ant auth login` profile) to run.")

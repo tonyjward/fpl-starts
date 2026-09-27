@@ -17,7 +17,7 @@ uv sync
 uv run streamlit run app.py
 ```
 
-The chat tab needs `ANTHROPIC_API_KEY` (and, only if your key isn't
+The chat needs `ANTHROPIC_API_KEY` (and, only if your key isn't
 scoped to a single workspace, `ANTHROPIC_WORKSPACE_ID` -- confirmed live:
 an unscoped key 400s on every request without it). `agent.py` loads both
 via `python-dotenv` automatically from a `.env` file in this directory,
@@ -108,11 +108,11 @@ team.
   `CURRENT_SQUAD_READY`), transfer parsing and player-name resolution, and
   selecting the current squad's rows from `fpl_starts.pstart` output.
   Framework-agnostic: it works on any mapping, `st.session_state` or a dict.
-- **`app.py`** -- the onboarding steps, then two tabs for the current
-  squad: predictions (chance of starting, availability, last-GW role, start
-  rates, and a per-player breakdown of what's holding him back compared
-  with a nailed-on starter), and a chat interface wired to the agent, whose
-  squad tool gives the same explanation in text.
+- **`app.py`** -- the onboarding steps, then the current squad's page:
+  predictions on the left (chance of starting, availability, last-GW role,
+  start rates, and a per-player breakdown of what's holding him back
+  compared with a regular starter), and the chat beside them on the right,
+  always in view (stacked below on a phone).
 
 ## What this doesn't do (yet)
 

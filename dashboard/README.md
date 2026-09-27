@@ -59,6 +59,20 @@ coefficient and log-odds contribution. A missing model, missing inputs or a
 gameweek with no prediction is an error on screen; there is no fallback to
 any other model.
 
+## Your squad first
+
+The app opens by asking for your FPL team ID, checks it exists (FPL's
+`entry/{id}/`), and loads your official squad as it stood at the end of the
+last completed gameweek. It then asks what you've changed since -- "No
+changes", "João Pedro out for Calvert-Lewin", "sold A and B and bought C and
+D" -- and resolves each named player to a stable FPL player code (accents and
+punctuation don't matter; an unknown or ambiguous name, an outgoing player
+not in the squad or an incoming one already in it is refused with nothing
+changed). Every prediction view, the player drill-down and the chat agent
+then use that current squad: official squad + your transfers. The official
+squad itself is never changed; "Change team" clears everything for the
+team.
+
 ## What's here
 
 - **`data.py`** -- all reads: P(start) via `fpl_starts.pstart`, scoring via
@@ -69,11 +83,17 @@ any other model.
   over `data.py` -- the model never estimates a probability or a score
   itself, same discipline as `fpl-starts`'s own agent challenger. `uv run
   python agent.py "your question"` for a quick CLI check outside Streamlit.
-- **`app.py`** -- four tabs: per-player predictions (P(start), availability,
-  last-GW role, start rates, top positive/negative factors, and a per-player
-  breakdown), gameweek performance against the baselines (stratified), one
-  manager's squad against the registered predictions (captain/vice-captain
-  highlighted), and a chat interface wired to the agent.
+- **`squad.py`** -- the onboarding state machine (`NO_TEAM` ->
+  `TEAM_ID_VALID` -> `OFFICIAL_SQUAD_LOADED` -> `TRANSFER_STATE_CONFIRMED` ->
+  `CURRENT_SQUAD_READY`), transfer parsing and player-name resolution, and
+  selecting the current squad's rows from `fpl_starts.pstart` output.
+  Framework-agnostic: it works on any mapping, `st.session_state` or a dict.
+- **`app.py`** -- the onboarding steps, then four tabs for the current
+  squad: predictions (P(start), availability, last-GW role, start rates, top
+  positive/negative factors, and a per-player breakdown), the squad view
+  (captain, vice-captain and transfers highlighted), gameweek performance
+  against the baselines (stratified), and a chat interface wired to the
+  agent.
 
 ## What this doesn't do (yet)
 
@@ -85,6 +105,9 @@ agent proves useful and an operator-console tier is actually wanted.
 
 ## Tests
 
-The P(start) service and `data.py` are covered by the root suite
-(`tests/test_pstart.py`, run with `uv run pytest` from the repo root) on
-synthetic inputs -- no Streamlit needed.
+The P(start) service, `data.py` and the squad logic in `squad.py` are
+covered by the root suite (`tests/test_pstart.py`,
+`tests/test_dashboard_squad.py`; `uv run pytest` from the repo root) on
+synthetic inputs -- no Streamlit needed. The onboarding flow through the real
+app is covered by Streamlit AppTests with a faked FPL API
+(`dashboard/tests/`; `uv run pytest` from this directory).

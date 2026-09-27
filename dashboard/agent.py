@@ -34,9 +34,11 @@ regression. You have two tools: one reads how the model scored for a given \
 gameweek (Brier score and accuracy, stratified by Core/Rotation/Marginal/Deep -- \
 lower Brier is better, and never quote a single pool-wide number as if it \
 were the whole story, since Deep players are trivially predictable and \
-dominate any pool average); the other, given an FPL manager's team ID and \
-a gameweek, pulls their actual 15-player squad with the model's p_start, \
-availability status, last-gameweek role and start rates for each player.
+dominate any pool average); the other returns a 15-player squad -- the \
+user's current squad, including transfers they've told the app about, or \
+(from the command line) a manager's squad by team ID and gameweek -- with the \
+model's p_start, availability status, last-gameweek role and start rates for \
+each player.
 
 Never estimate a probability or a score yourself -- every number you state \
 must come from a tool call in this conversation, not from your own \
@@ -93,6 +95,24 @@ def get_team_squad_predictions(team_id: int, event: int) -> str:
     return squad.round(4).to_string(index=False)
 
 
+def make_current_squad_tool(get_report):
+    """A tool returning the app user's current squad -- official squad at
+    the end of the last completed gameweek plus the transfers they've told
+    the app about -- via `get_report()`, called at tool-call time."""
+    @tool
+    def get_my_current_squad_predictions() -> str:
+        """The user's current FPL squad (their official squad from the last
+        completed gameweek, with the transfers they've made since applied),
+        with the logistic model's P(starts), availability status,
+        last-gameweek role, start rates and the largest positive/negative
+        factors for each player. Use this for any question about "my team"
+        or "my squad". Returns a plain-text table, or a message saying the
+        squad or its predictions aren't ready yet.
+        """
+        return get_report()
+    return get_my_current_squad_predictions
+
+
 def extract_text(content):
     """The plain-text answer from one message's `.content` -- Opus 5 thinks
     by default, so `content` is a list of blocks (thinking + text), not a
@@ -109,15 +129,18 @@ def extract_text(content):
     )
 
 
-def build_agent():
+def build_agent(squad_tool=None):
+    """`squad_tool` (e.g. from make_current_squad_tool) replaces the
+    team-ID squad tool -- the app passes one so chat uses the user's current
+    squad, transfers included."""
     # An API key that isn't scoped to a single workspace needs this header on
     # every request (confirmed live -- omitting it 400s), a key that *is*
     # scoped doesn't need or accept it being wrong, so only send it when set.
     workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
     default_headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
     llm = ChatAnthropic(model=MODEL, max_tokens=8000, default_headers=default_headers)
-    return create_react_agent(llm, [get_gameweek_report, get_team_squad_predictions],
-                               prompt=SYSTEM_PROMPT)
+    tools = [get_gameweek_report, squad_tool or get_team_squad_predictions]
+    return create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
 
 
 def _main():

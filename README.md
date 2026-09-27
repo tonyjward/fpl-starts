@@ -1,24 +1,64 @@
 # fpl-starts
 
-An interpretable, leakage-safe P(start) modelling project for Fantasy
-Premier League, with historical evaluation, calibration, prospective
-scoring and explanation-ready predictions.
+**A chat-based decision platform for Fantasy Premier League, grounded in an
+interpretable statistical model.**
+
+Ask it about your squad in plain English -- *"Who's at risk this week?"*,
+*"Is Palmer fit?"*, *"Who could replace Greaves for £5m?"* -- and every
+answer is built from a frozen, prospectively evaluated model of whether each
+player will start, with the reasoning behind every number. The language
+model phrases the answer; it never supplies the numbers.
 
 Fantasy Premier League has over 11 million players. Each week every one of
 them decides which transfers to make and which 11 of their 15 players to
-start, and almost every one of those decisions turns on whether a player
-will actually start. FPL's own `chance_of_playing_next_round` (25/50/75/100)
-only says whether a player *can* be picked; it says nothing about rotation,
-form or a manager's preferences. This project estimates the probability
-that each player starts his club's next match, and stores the reasoning
-behind every number.
+start. Having a reliable estimate of a player's chance of playing can
+improve decision making - players that don't start and don't come on 
+as a sub will score no points.
+
+## How it works
+
+Three layers, each only trusting the one below it:
+
+1. **A statistical model.** An interpretable logistic regression estimates
+   each player's chance of starting his club's next match. It's leakage-safe,
+   frozen before the season and scored prospectively, and every prediction
+   decomposes exactly into its reasons -- explained against a regular
+   starter, in groups of inputs that belong together.
+2. **Reproducible data.** A write-once archive of the FPL API, rebuilt into a
+   SQLite layer and refreshed on request up to each gameweek's deadline; every
+   refresh can register a new forecast, and every forecast is kept.
+3. **A decision layer.** A Streamlit app and a LangGraph chat agent that know
+   your actual squad (team ID plus the transfers you describe). The agent
+   answers through tools over the model and data -- squad risks with legal
+   bench swaps, replacements within your budget, FPL news, refreshes -- and
+   says plainly what the model can't answer (points, captaincy).
+
+```mermaid
+flowchart LR
+    M(["Manager: 'Who's at risk in my squad?'"]) --> APP["Streamlit app"]
+    APP --> AGENT
+    subgraph AGENT["LangGraph agent"]
+        direction TB
+        S(("start")) --> A["agent node<br/>Claude: answer, or call a tool?"]
+        A -->|tool call| T["tools node<br/>runs the tool"]
+        T -->|result| A
+        A -->|answer| E(("end"))
+    end
+    T --> TOOLS["Chat tools<br/>squad risks, explain a player,<br/>replacements, FPL news, refresh"]
+    TOOLS --> FC[("Registered forecast<br/>and frozen model")]
+    TOOLS --> DB[("derived.db<br/>players, prices, news")]
+    TOOLS -.->|refresh, before the deadline| API["FPL API"]
+    E --> APP
+```
 
 > **Modelling case study:** see
 > [`notebooks/logistic_p_start_model.ipynb`](notebooks/logistic_p_start_model.ipynb)
 > for the feature-selection, temporal-validation, calibration and
-> player-level explainability walkthrough.
+> player-level explainability walkthrough. For the chat agent -- how a
+> question flows through the graph, the tools and the refresh -- see
+> [`dashboard/README.md`](dashboard/README.md).
 
-## The model
+## The statistical model
 
 `src/fpl_starts/ml/` holds `logistic_availability`: a six-predictor logistic
 regression (FPL availability status, last gameweek's role, minutes in the
@@ -149,35 +189,10 @@ only. Both use synthetic inputs -- no network, API key or local data.
 
 ## Dashboard and chat agent
 
-`dashboard/` is a Streamlit app for FPL managers: enter your team ID, tell it
-about any transfers since the last gameweek, and see each player's chance of
-starting with the reason behind it -- then ask a chat agent about your
-squad. The chat is a LangGraph agent whose answers come only from tools
-over the frozen model's forecasts and this repo's data:
-
-```mermaid
-flowchart LR
-    M(["Manager: 'Who's at risk in my squad?'"]) --> APP["Streamlit app"]
-    APP --> AGENT
-    subgraph AGENT["LangGraph agent"]
-        direction TB
-        S(("start")) --> A["agent node<br/>Claude: answer, or call a tool?"]
-        A -->|tool call| T["tools node<br/>runs the tool"]
-        T -->|result| A
-        A -->|answer| E(("end"))
-    end
-    T --> TOOLS["Chat tools<br/>squad risks, explain a player,<br/>replacements, FPL news, refresh"]
-    TOOLS --> FC[("Registered forecast<br/>and frozen model")]
-    TOOLS --> DB[("derived.db<br/>players, prices, news")]
-    TOOLS -.->|refresh, before the deadline| API["FPL API"]
-    E --> APP
-```
-
-Claude never calculates a number itself, every answer says when the FPL data
-is from, and the agent declines points and captaincy questions -- it only
-knows who's likely to start. See [`dashboard/README.md`](dashboard/README.md)
-for how a question flows through the graph, the tools, and the refresh. It's
-its own nested Python project (separate `pyproject.toml`/venv):
+`dashboard/` is the decision layer: the Streamlit app and LangGraph agent
+described above. It's its own nested Python project (separate
+`pyproject.toml`/venv); see [`dashboard/README.md`](dashboard/README.md) for
+the details.
 
 ```
 cd dashboard

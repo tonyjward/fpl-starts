@@ -1,9 +1,13 @@
-# Who's likely to start? -- the dashboard
+# Who's likely to start? -- the chat decision layer
 
-A Streamlit app and LangGraph chat agent for the frozen logistic P(start)
-model, `logistic_availability_v1`. A manager enters their FPL team ID, tells
-the app about any transfers since the last gameweek, and sees each player's
-chance of starting -- with why -- and can ask a chat agent about their squad.
+The decision layer of `fpl-starts`: a chat interface for FPL managers,
+grounded in the frozen statistical model `logistic_availability_v1`. A
+manager enters their FPL team ID, tells the app about any transfers since
+the last gameweek, sees each player's chance of starting with the reason
+behind it, and asks a LangGraph agent about their squad -- who's at risk,
+who could replace whom within budget, who's injured. The agent answers only
+through tools over the model and data: it phrases the answer, the model
+supplies every number.
 
 It lives inside `fpl-starts` as its own nested `pyproject.toml`/venv:
 a Streamlit/LangGraph app has no business sharing a dependency set with the

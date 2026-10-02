@@ -150,8 +150,14 @@ def test_squad_news_flags_changes_since_the_forecast():
     assert len([l for l in text.splitlines() if l.startswith("- ")]) == 2
 
 
-def test_news_for_one_player_and_none():
-    assert "doubtful (50% chance of playing)" in tools.player_news(_context(), "Cole Palmer")
+def test_one_players_news_is_part_of_explain_player():
+    assert "doubtful (50% chance of playing)" in tools.explain_player(_context(), "Cole Palmer")
+    assert "changed" not in tools.explain_player(_context(), "Cole Palmer")  # the forecast assumed doubtful
+    saka = tools.explain_player(_context(), "Saka")
+    assert "This has changed since the forecast (made 20 Sep 2026, 10:00 UTC), which assumed available" in saka
+
+
+def test_no_squad_news():
     quiet = _context(e9={"status": "a", "news": "", "chance_of_playing_next_round": None},
                      e15={"status": "i", "news": ""})
     assert tools.player_news(quiet).startswith("No FPL injury, suspension or news flags")

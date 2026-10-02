@@ -308,9 +308,9 @@ def _status_change(ctx, code):
     if code not in assumed.index or \
             FORECAST_STATUS.get(assumed[code]) == (ctx.status.get(code) or {}).get("status"):
         return None
-    return "This has changed since the forecast (made {0}), which assumed {1}; refreshing the forecast " \
-           "would take it into account.".format(when(forecast.metadata.get("predicted_at")),
-                                                assumed[code].replace("_", " "))
+    return "This has changed since the forecast (made {0}), which assumed {1}, so the chance of starting " \
+           "doesn't reflect it yet.".format(when(forecast.metadata.get("predicted_at")),
+                                            assumed[code].replace("_", " "))
 
 
 def player_news(ctx):

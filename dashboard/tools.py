@@ -132,7 +132,8 @@ def _why(ctx, code):
 # --- tools ------------------------------------------------------------------------------------
 
 def explain_player(ctx, name):
-    """Any player's chance of starting, why, his price and FPL status."""
+    """Any player's chance of starting, why, his price, FPL status and news,
+    and whether that status has changed since the forecast."""
     problem = _ready(ctx)
     if problem:
         return problem
@@ -151,7 +152,9 @@ def explain_player(ctx, name):
     else:
         lines.append("Chance of starting in gameweek {0}: {1:.0%}. A regular starter would be at {2:.0%}; {3}.".format(
             meta["gameweek"], chance, meta["reference_p_start"], _why(ctx, player["code"])))
-    lines.append("FPL status: {0}.".format(_status_line(ctx, player["code"])))
+    status = "FPL status: {0}.".format(_status_line(ctx, player["code"]))
+    change = _status_change(ctx, player["code"])
+    lines.append(status + " " + change if change else status)
     lines.append(_as_of(ctx))
     return "\n".join(lines)
 
@@ -295,34 +298,36 @@ def find_replacements(ctx, replacing=None, position=None, max_price=None, bank=N
     return "\n".join(lines)
 
 
-def player_news(ctx, name=None):
-    """FPL's status and news for one player, or every squad player with news
-    or a status that has changed since the forecast was made."""
-    problem = _ready(ctx, need_squad=name is None)
-    if problem:
-        return problem
+def _status_change(ctx, code):
+    """Warn if FPL's status for this player (e.g. injured) differs from the
+    status the forecast was made with -- i.e. the chance of starting is based
+    on out-of-date news. Returns the warning sentence, or None if nothing has
+    changed (or the player wasn't forecast)."""
     forecast = _forecast(ctx)
     assumed = forecast.players.set_index("code")["availability_status"]
-    made = when(forecast.metadata.get("predicted_at"))
+    if code not in assumed.index or \
+            FORECAST_STATUS.get(assumed[code]) == (ctx.status.get(code) or {}).get("status"):
+        return None
+    return "This has changed since the forecast (made {0}), which assumed {1}; refreshing the forecast " \
+           "would take it into account.".format(when(forecast.metadata.get("predicted_at")),
+                                                assumed[code].replace("_", " "))
 
-    def changed(code):
-        if code not in assumed.index:
-            return False
-        return FORECAST_STATUS.get(assumed[code]) != (ctx.status.get(code) or {}).get("status")
 
-    if name:
-        try:
-            players = [_resolve(ctx, name)]
-        except squadlib.TransferError as exc:
-            return str(exc)
-    else:
-        players = [p for p in _squad(ctx) if (ctx.status.get(p["code"]) or {}).get("news") or changed(p["code"])]
+def player_news(ctx):
+    """FPL's status and news for every squad player with news or a status
+    that has changed since the forecast was made. (One player's news is
+    part of explain_player.)"""
+    problem = _ready(ctx, need_squad=True)
+    if problem:
+        return problem
     lines = []
-    for p in players:
+    for p in _squad(ctx):
+        change = _status_change(ctx, p["code"])
+        if not (ctx.status.get(p["code"]) or {}).get("news") and change is None:
+            continue
         line = "- {0}: {1}.".format(_name(p), _status_line(ctx, p["code"]))
-        if changed(p["code"]):
-            line += " This has changed since the forecast (made {0}), which assumed {1}; refreshing the forecast " \
-                    "would take it into account.".format(made, assumed[p["code"]].replace("_", " "))
+        if change:
+            line += " " + change
         lines.append(line)
     if not lines:
         lines.append("No FPL injury, suspension or news flags for anyone in your squad.")

@@ -33,9 +33,10 @@ logistic_availability_v1, a frozen, interpretable logistic regression, and \
 each is explained against a regular starter (available and starting every \
 week). Your tools cover: the manager's current squad (their official squad \
 from the last completed gameweek plus the transfers they've told the app \
-about); any player's chance of starting and why; starting-XI risks with \
-legal bench swaps; replacements likely to start, by position and budget; \
-FPL's own injury/suspension news and whether it changed since the forecast; \
+about); any player's chance of starting, why, and their FPL news; starting-XI \
+risks with legal bench swaps; replacements likely to start, by position and \
+budget; FPL's injury/suspension news across the squad and whether it \
+changed since the forecast; \
 refreshing our FPL data (and, before the deadline, the forecast); and how \
 the model scored in past gameweeks (Brier score and accuracy by \
 Core/Rotation/Marginal/Deep -- lower is better; never quote the pool-wide \
@@ -47,7 +48,10 @@ or which transfer is "best", say plainly that you can tell them who's likely \
 to start, not who'll score -- then offer what you can (e.g. which options are \
 nailed-on). Budgets: FPL doesn't publish selling prices, so the bank is an \
 estimate unless the user tells you theirs; if they do, pass it to the \
-replacements tool. Every tool answer states when our FPL data is from; \
+replacements tool. For a replacement question ("who can replace X?"), call \
+the replacements tool alone -- it already looks up X's position and price, \
+so don't also call the player tool on X. Every tool answer states when our \
+FPL data is from; \
 mention it when news or prices matter. If the user thinks our news is out \
 of date, use the refresh tool (it only works before the deadline, and not \
 more than every 30 minutes).
@@ -131,11 +135,14 @@ def make_app_tools(get_report, get_context, refresh_and_report):
 
     @tool
     def explain_player(name: str) -> str:
-        """Any player's chance of starting in the upcoming gameweek (in the
-        user's squad or not), what's holding him back compared with a regular
-        starter, his price and FPL status/news. `name` as the user said it
-        (e.g. "Cole Palmer", "Bruno"). Asks for clarification if the name is
-        ambiguous -- relay that question to the user.
+        """Everything about one player (in the user's squad or not): chance
+        of starting in the upcoming gameweek, what's holding him back
+        compared with a regular starter, his price, and FPL's injury/
+        suspension status and news (and whether it changed since the
+        forecast). Use for any single-player question, including "is X fit?"
+        or "is X injured?". `name` as the user said it (e.g. "Cole Palmer",
+        "Bruno"). Asks for clarification if the name is ambiguous -- relay
+        that question to the user.
         """
         return session_tools.explain_player(get_context(), name)
 
@@ -156,18 +163,21 @@ def make_app_tools(get_report, get_context, refresh_and_report):
         his position and budget (his price + the bank); or `position`
         ("goalkeeper", "defender", "midfielder", "forward") and optionally
         `max_price` in £m. Pass `bank` (£m) if the user tells you how much
-        they have -- it's remembered. Respects the 3-per-club limit.
+        they have -- it's remembered. Respects the 3-per-club limit. Looks
+        up the outgoing player itself, so there's no need to call
+        explain_player on him first.
         """
         return session_tools.find_replacements(get_context(), replacing=replacing, position=position,
                                                 max_price=max_price, bank=bank, min_chance=min_chance)
 
     @tool
-    def player_news(name: str = None) -> str:
-        """FPL's own status and injury/suspension news for one player
-        (`name`), or with no name for every squad player with news or whose
-        status has changed since the forecast was made.
+    def player_news() -> str:
+        """FPL's injury/suspension news across the user's whole squad: every
+        squad player with news or whose status has changed since the
+        forecast was made. Use for "any injury news in my team?". For one
+        player's news, use explain_player instead.
         """
-        return session_tools.player_news(get_context(), name)
+        return session_tools.player_news(get_context())
 
     @tool
     def refresh_fpl_data() -> str:

@@ -16,16 +16,18 @@ login` profile) for the chat only.
 """
 
 import os
+import uuid
 
 import pandas as pd
 import streamlit as st
+from langgraph.checkpoint.memory import InMemorySaver
 
 from fpl_starts import explanation
 
 import data
 import squad
 import tools
-from agent import SEASON, build_agent, extract_text, make_app_tools
+from agent import SEASON, build_agent, extract_text, make_app_tools, thread_config
 
 st.set_page_config(page_title="Who's likely to start?", layout="wide")
 st.title("Who's likely to start?")
@@ -113,6 +115,15 @@ def refresh_and_report(ctx):
         return tools.Context(state=ctx.state, universe=data.load_player_universe(),
                              status=data.load_player_status(), data_as_of=data.data_as_of())
     return tools.refresh_data(ctx, data.refresh_fpl_data, reload)
+
+
+def new_agent_thread(state):
+    """Start a new conversation: a new opaque thread ID has no checkpoints,
+    so the agent's next turn sees only its own question. Memory lives in the
+    session agent's InMemorySaver -- lost on a server restart or a new
+    browser session, by design for now."""
+    state.agent_thread_id = str(uuid.uuid4())
+    state.chat_history = []
 
 
 def presentable(frame, columns):
@@ -284,13 +295,18 @@ with chat_area:
     if "agent" not in state:
         # The tools read `chat["ctx"]`, a fresh snapshot set before every
         # question (see tools_context), so they always see the current squad,
-        # transfers and data without the agent being rebuilt.
+        # transfers and data without the agent being rebuilt. The checkpointer
+        # holds only this session's conversation (one per session agent, never
+        # shared between users) -- the squad and data never come from it.
         chat = state.chat = {}
         state.agent = build_agent(app_tools=make_app_tools(
             lambda: squad.current_squad_report(chat["ctx"].state), lambda: chat["ctx"],
-            lambda: refresh_and_report(chat["ctx"])))
+            lambda: refresh_and_report(chat["ctx"])), checkpointer=InMemorySaver())
+    if "agent_thread_id" not in state:
+        new_agent_thread(state)
     if "chat_history" not in state:
         state.chat_history = []
+    new_chat_slot = st.container()  # filled at the end of the run -- see below
 
     # The conversation so far; a new question and answer are written into
     # this container too, so they appear in order below the earlier ones.
@@ -313,7 +329,12 @@ if question:
             with st.spinner("Thinking..."):
                 version_before = data.db_version()
                 state.chat["ctx"] = tools_context()
-                result = state.agent.invoke({"messages": [{"role": "user", "content": question}]})
+                # Only the new question: earlier turns come from the
+                # checkpointer, so resending chat_history would duplicate them.
+                result = state.agent.invoke(
+                    {"messages": [{"role": "user", "content": question}]},
+                    config=thread_config(state.agent_thread_id, app="fpl-starts", season=SEASON,
+                                         gameweek=state["last_completed_gameweek"] + 1))
                 keep_tool_writes(state.chat["ctx"])
                 answer = extract_text(result["messages"][-1].content)
             st.markdown(answer)
@@ -322,3 +343,8 @@ if question:
         # A refresh rebuilt the data after the predictions were drawn on this
         # run -- draw the page again so they show the new forecast.
         st.rerun()
+
+# Drawn last, so it appears as soon as the first answer is in.
+if state.chat_history and new_chat_slot.button("New chat", key="new_chat"):
+    new_agent_thread(state)
+    st.rerun()

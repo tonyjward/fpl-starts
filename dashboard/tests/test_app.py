@@ -227,3 +227,56 @@ def test_the_chat_input_is_pinned_below_the_conversation(fake_fpl, scripted_llm)
     at.chat_input[0].set_value("And now?").run()
     assert [m.name for m in at.chat_message] == ["user", "assistant"] * 2
     assert len(at.chat_input) == 1 and "ChatInput" not in _chat_order(at.main)
+
+
+# --- conversation memory ----------------------------------------------------------------------
+
+def _humans(call):
+    return [m.content for m in call if m.type == "human"]
+
+
+def test_the_chat_remembers_earlier_turns_without_resending_the_transcript(fake_fpl, scripted_llm):
+    """The second question's model call sees the first exchange -- from the
+    checkpointer, so the first question appears once, not twice."""
+    llm = scripted_llm("squad_risks")
+    at = _ready_for_chat()
+    thread_id = at.session_state["agent_thread_id"]
+    at.chat_input[0].set_value("Who's at risk?").run()
+    at.chat_input[0].set_value("yes").run()
+    assert not at.exception
+    second_turn = llm.calls[2]  # each question: a tool call, then the answer
+    assert _humans(second_turn) == ["Who's at risk?", "yes"]
+    assert any(m.type == "tool" for m in second_turn)  # turn 1's tool result is part of the history
+    assert at.session_state["agent_thread_id"] == thread_id  # stable across reruns
+
+
+def test_new_chat_starts_a_fresh_conversation(fake_fpl, scripted_llm):
+    llm = scripted_llm("squad_risks")
+    at = _ready_for_chat()
+    assert not [b for b in at.button if b.key == "new_chat"]  # nothing to clear yet
+    at.chat_input[0].set_value("Who's at risk?").run()
+    old_thread = at.session_state["agent_thread_id"]
+    at.button(key="new_chat").click().run()
+    assert at.session_state["agent_thread_id"] != old_thread
+    assert at.session_state["chat_history"] == [] and len(at.chat_message) == 0
+    at.chat_input[0].set_value("Is Palmer fit?").run()
+    assert _humans(llm.calls[-2]) == ["Is Palmer fit?"]
+
+
+def test_change_team_also_starts_a_new_conversation(fake_fpl, scripted_llm):
+    scripted_llm("squad_risks")
+    at = _ready_for_chat()
+    at.chat_input[0].set_value("Who's at risk?").run()
+    old_thread = at.session_state["agent_thread_id"]
+    at.button(key="change_team").click().run()
+    assert "agent_thread_id" not in at.session_state and "agent" not in at.session_state
+    at = _submit_transfers(_submit_team_id(at, str(fakes.VALID_TEAM_ID)), "No changes")
+    assert at.session_state["agent_thread_id"] != old_thread
+
+
+def test_each_session_gets_its_own_opaque_thread_id(fake_fpl, scripted_llm):
+    scripted_llm("squad_risks")
+    first, second = _ready_for_chat(), _ready_for_chat()
+    ids = [first.session_state["agent_thread_id"], second.session_state["agent_thread_id"]]
+    assert ids[0] != ids[1]
+    assert all(str(fakes.VALID_TEAM_ID) not in i and len(i) == 36 for i in ids)  # a UUID, not the team ID

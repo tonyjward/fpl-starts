@@ -38,6 +38,7 @@ SQUAD_STATE_KEYS = [
     "team_id", "team_id_validated", "team_name", "manager_name", "official_squad", "last_completed_gameweek",
     "transfer_overrides", "raw_transfer_messages", "transfer_state_confirmed", "current_squad",
     "predictions", "predictions_version", "pred_player", "chat_history", "bank", "bank_override", "refresh_message", "agent", "chat",
+    "agent_thread_id",
     # widget values, so nothing typed for one team is shown for the next
     "team_id_input", "transfer_input",
 ]

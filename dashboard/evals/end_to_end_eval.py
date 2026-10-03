@@ -113,9 +113,10 @@ def build_context():
     )
 
 
-def build_eval_agent(ctx):
+def build_eval_agent(ctx, checkpointer=None):
     """The production agent wired to the synthetic context. The refresh
-    callback is a stub, so the real refresh pipeline can never run."""
+    callback is a stub, so the real refresh pipeline can never run. Pass a
+    `checkpointer` for multi-turn runs (multi_turn_eval.py)."""
 
     def refresh_disabled():
         return "Evaluation fixture: refresh is disabled.\nFPL data as of {0}.".format(
@@ -126,7 +127,7 @@ def build_eval_agent(ctx):
         get_context=lambda: ctx,
         refresh_and_report=refresh_disabled,
     )
-    return build_agent(app_tools=app_tools)
+    return build_agent(app_tools=app_tools, checkpointer=checkpointer)
 
 
 def extract_trajectory(messages):

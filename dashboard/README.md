@@ -130,7 +130,42 @@ The tools (`tools.py`, wrapped for LangGraph in `agent.py`):
 
 The agent only speaks to chance of starting: it has no model of points,
 fixtures' difficulty or value, so it declines "who should I captain?" and
-says so. The chat doesn't remember earlier questions yet.
+says so.
+
+### Conversation memory
+
+The chat remembers the conversation, so "yes" can accept an offer from the
+previous answer and "find replacements for him" knows who "him" is. Two
+kinds of state are kept apart:
+
+- **Conversation state** -- what was just said -- belongs to LangGraph. The
+  session's agent is built with its own `InMemorySaver` checkpointer, and
+  every question is sent with the session's thread ID
+  (`configurable.thread_id`, see `agent.thread_config`). Each invoke sends
+  only the new question; the earlier turns come from the checkpointer.
+  `chat_history` in the session is only what the page draws.
+- **Business state** -- the squad, forecast, prices and news -- still comes
+  from the fresh `tools.Context` snapshot built before every question, never
+  from anything checkpointed. (An earlier tool *answer* in the conversation
+  can be older than the data, though; Claude calls the tool again when it
+  needs current numbers.)
+
+The thread ID is an opaque UUID, made once per Streamlit session. **New
+chat** (shown once there's a conversation) and **Change team** start a new
+one; a data refresh doesn't.
+
+Memory is per session and per server process: it's lost when the app
+restarts or the browser starts a new session. Durable conversations would
+mean swapping `InMemorySaver` for a persistent checkpointer -- nothing else
+changes. A thread keeps every message for now; long conversations would
+eventually need trimming or summarising.
+
+**Tracing is separate.** When LangSmith tracing is switched on (the
+`LANGSMITH_*` variables in `.env`), the same thread ID goes into each
+question's trace metadata (`thread_id`, with `app`, `season` and
+`gameweek`), so LangSmith's Threads view groups one conversation's traces
+together. That's for looking at conversations, not for remembering them:
+the agent's memory is the checkpointer, never LangSmith.
 
 ## Keeping the data fresh
 
@@ -183,7 +218,8 @@ and `predictions/`, the app needs a writable disk.
 - No points, captaincy or transfer-value advice -- only who's likely to start.
 - No exact transfer budget: FPL doesn't publish selling prices, so the bank
   after transfers is an estimate unless the user gives theirs.
-- No chat memory between questions.
+- No chat memory across server restarts or browser sessions -- only within
+  one session (see Conversation memory).
 
 ## Tests
 
@@ -194,4 +230,22 @@ end on synthetic inputs -- no Streamlit, network or API key
 `test_refresh.py`). The app itself is covered by Streamlit AppTests
 (`dashboard/tests/`; `uv run pytest` from this directory), including real
 tool calls run through LangGraph by a scripted chat model, so no API calls
-are made.
+are made. `tests/test_conversation_memory.py` covers the thread/checkpointer
+contract with a fake model.
+
+### Live evals
+
+These call the Claude API (so they cost money and aren't part of pytest) on
+the synthetic data in `tests/fakes.py`; run them from this directory after
+sourcing `../.env`:
+
+- `uv run python -m evals.routing_eval` -- Claude's first decision only:
+  which tool, which arguments. Cheap; nothing is executed.
+- `uv run python -m evals.end_to_end_eval` -- one question through the whole
+  agent and the real tools, scored on tool trajectory, numeric faithfulness
+  and scope (`evals/scoring.py`).
+- `uv run python -m evals.multi_turn_eval` -- short conversations whose
+  second turn needs the first ("him", "yes"), scored on conversation
+  continuity and the same three checks.
+
+Each takes `--runs N`, since Claude's answers vary from run to run.

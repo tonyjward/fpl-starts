@@ -209,10 +209,17 @@ def extract_text(content):
     )
 
 
-def build_agent(app_tools=None):
+def build_agent(app_tools=None, checkpointer=None):
     """`app_tools` (from make_app_tools) replace the command-line team-ID
     squad tool -- the app passes them so chat works on the user's current
-    squad and session."""
+    squad and session.
+
+    `checkpointer` (a LangGraph checkpoint saver) gives the agent memory
+    across turns: invoked with the same `configurable.thread_id` (see
+    thread_config), each turn sees the conversation so far. Without one, as
+    in the CLI and the evals, every invoke starts from nothing. The app
+    passes a new InMemorySaver per Streamlit session -- never share one
+    between users."""
     # An API key that isn't scoped to a single workspace needs this header on
     # every request (confirmed live -- omitting it 400s), a key that *is*
     # scoped doesn't need or accept it being wrong, so only send it when set.
@@ -220,7 +227,20 @@ def build_agent(app_tools=None):
     default_headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
     llm = ChatAnthropic(model=MODEL, max_tokens=8000, default_headers=default_headers)
     tools = [get_gameweek_report] + list(app_tools or [get_team_squad_predictions])
-    return create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+    return create_react_agent(llm, tools, prompt=SYSTEM_PROMPT, checkpointer=checkpointer)
+
+
+def thread_config(thread_id, **metadata):
+    """The invoke config for one conversation. The same opaque ID serves two
+    separate purposes: `configurable.thread_id` is the LangGraph checkpointer's
+    key for this conversation's messages (behaviour: "yes" knows what was
+    just offered), and `metadata.thread_id` is what LangSmith groups traces
+    into a thread by (observability only -- LangSmith is never the source of
+    the agent's memory). Keep `metadata` small and non-identifying."""
+    return {
+        "configurable": {"thread_id": thread_id},
+        "metadata": {"thread_id": thread_id, **metadata},
+    }
 
 
 def _main():

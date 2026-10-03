@@ -34,6 +34,12 @@ def score_trajectory(calls, required_tools=(), max_tool_calls=None, forbidden_to
     }
 
 
+def names_match(expected, actual):
+    """A tool's player-name argument refers to `expected`: every word of
+    `expected` appears in it, ignoring case ("Saka" ~ "Bukayo Saka")."""
+    return isinstance(actual, str) and set(expected.lower().split()) <= set(actual.lower().split())
+
+
 # --- numeric faithfulness ----------------------------------------------------------------
 
 # "40%", "40 %", "7.5%" -- the number directly before a % sign.

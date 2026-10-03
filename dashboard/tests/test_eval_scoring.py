@@ -129,3 +129,8 @@ def test_forbidden_tool_fails_but_any_route_is_otherwise_allowed():
     assert scoring.score_trajectory(["explain_player", "explain_player"], ())["pass"]
     result = scoring.score_trajectory(["refresh_fpl_data"], (), forbidden_tools={"refresh_fpl_data"})
     assert not result["pass"] and result["forbidden_used"] == ["refresh_fpl_data"]
+
+
+def test_player_names_match_by_word():
+    assert scoring.names_match("Saka", "Bukayo Saka") and scoring.names_match("Saka", "saka")
+    assert not scoring.names_match("Saka", "Haaland") and not scoring.names_match("Saka", None)

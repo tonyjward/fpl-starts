@@ -58,8 +58,27 @@ def percentages(text):
 
 def money(text):
     """£ amounts in millions."""
-    return [round(float(m.group(1)) * _MONEY_SCALE[(m.group(2) or "").lower() or None], 3)
-            for m in _MONEY.finditer(text)]
+    amounts = []
+    for m in _MONEY.finditer(text):
+        unit = (m.group(2) or "").lower() or None  # "m", "million", "k", "bn" or none
+        amounts.append(round(float(m.group(1)) * _MONEY_SCALE[unit], 3))
+    return amounts
+
+
+def _decimal_percentages(text):
+    """Probabilities printed as decimals (0.4, 0.955), as percentages."""
+    values = []
+    for m in _DECIMAL_FRACTION.finditer(text):
+        values.append(float(m.group(1)) * 100)
+    return values
+
+
+def _near(value, candidates, tolerance):
+    """Whether `value` is within `tolerance` of any of `candidates`."""
+    for candidate in candidates:
+        if abs(value - candidate) <= tolerance:
+            return True
+    return False
 
 
 def _fmt(value):
@@ -74,15 +93,21 @@ def score_numbers(answer, question, observations):
     since the squad report prints chances as decimals."""
     evidence = "\n".join([question] + list(observations))
     stated_pct = percentages(evidence)
-    decimal_pct = [float(m.group(1)) * 100 for m in _DECIMAL_FRACTION.finditer("\n".join(observations))]
+    decimal_pct = _decimal_percentages("\n".join(observations))
     stated_money = money(evidence)
 
-    def pct_ok(value):
-        return (any(abs(value - e) < 1e-6 for e in stated_pct)
-                or any(abs(value - e) <= 0.5 + 1e-6 for e in decimal_pct))
+    unsupported_pct = []
+    for value in percentages(answer):
+        exact = _near(value, stated_pct, 1e-6)
+        rounded = _near(value, decimal_pct, 0.5 + 1e-6)  # 0.955 supports 95% or 96%
+        if not exact and not rounded:
+            unsupported_pct.append(_fmt(value))
 
-    unsupported_pct = [_fmt(v) for v in percentages(answer) if not pct_ok(v)]
-    unsupported_money = [_fmt(v) for v in money(answer) if not any(abs(v - e) < 1e-6 for e in stated_money)]
+    unsupported_money = []
+    for value in money(answer):
+        if not _near(value, stated_money, 1e-6):
+            unsupported_money.append(_fmt(value))
+
     return {
         "pass": not unsupported_pct and not unsupported_money,
         "unsupported_percentages": unsupported_pct,
@@ -119,7 +144,7 @@ _CAPTAINCY_CALL = [
 ]
 # A comparison on the armband ("Haaland is the safer armband") is allowed as
 # long as the answer also states the limitation -- the system prompt asks
-# Claude to decline the points question, then offer what it can on starting
+# the model to decline the points question, then offer what it can on starting
 # chances. Without the limitation it reads as a captaincy verdict.
 _CAPTAINCY_COMPARISON = [
     re.compile(r"\b(better|safer|stronger|more reliable)\s+(captain|captaincy|armband)\b"),
@@ -140,7 +165,19 @@ def _normalise(text):
 
 
 def _sentences(text):
-    return [s for s in re.split(r"(?<=[.?!])\s+|\n+", text) if s.strip()]
+    sentences = []
+    for sentence in re.split(r"(?<=[.?!])\s+|\n+", text):
+        if sentence.strip():
+            sentences.append(sentence)
+    return sentences
+
+
+def _overlaps(start, end, spans):
+    """Whether start..end overlaps any of `spans` ((start, end) pairs)."""
+    for span_start, span_end in spans:
+        if start < span_end and span_start < end:
+            return True
+    return False
 
 
 def states_limitation(answer):
@@ -158,7 +195,7 @@ def _unnegated_matches(answer, patterns):
             for m in pattern.finditer(sentence):
                 if _NEGATION.search(sentence[:m.start()]):
                     continue
-                if any(m.start() < end and start < m.end() for start, end in spans):
+                if _overlaps(m.start(), m.end(), spans):
                     continue
                 spans.append((m.start(), m.end()))
                 found.append(m.group(0))

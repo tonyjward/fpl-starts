@@ -35,7 +35,7 @@ class Recording(BaseChatModel):
 def model(monkeypatch):
     """The fake model build_agent will use; set `.replies` before invoking."""
     fake = Recording()
-    monkeypatch.setattr(agent, "ChatAnthropic", lambda **kwargs: fake)
+    monkeypatch.setattr(agent, "build_chat_model", lambda config=None: fake)
     return fake
 
 

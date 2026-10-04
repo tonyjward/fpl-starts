@@ -10,22 +10,14 @@ public, unauthenticated FPL API endpoints. No pipeline step, no prediction, no
 archive write is reachable from this agent.
 """
 
-import os
-
-from dotenv import load_dotenv
-from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 import data
-
-# load environment variables
-_HERE = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(_HERE, "..", ".env"))
+from llm import LLMConfigError, build_chat_model
 
 SEASON = "2026-27"
 PRIOR_SEASON = "2025-26"
-MODEL = "claude-opus-5"
 
 SYSTEM_PROMPT = """You help a Fantasy Premier League manager with one \
 question: who is likely to start. The predictions come from \
@@ -194,22 +186,26 @@ def make_app_tools(get_report, get_context, refresh_and_report):
 
 
 def extract_text(content):
-    """The plain-text answer from one message's `.content` -- Opus 5 thinks
-    by default, so `content` is a list of blocks (thinking + text), not a
-    bare string; printing/rendering the list directly (confirmed live)
-    dumps the thinking block's raw signature next to the real answer.
-    Some LangChain integrations do flatten to a plain string, so handle
-    both rather than assume the list shape.
+    """The user-visible text of one message's `.content`, whichever provider
+    wrote it. Content is either a plain string, or a list of blocks: text
+    blocks (`{"type": "text", "text": ...}`, or bare strings) are kept;
+    everything else -- thinking/reasoning blocks, tool-use blocks -- is
+    dropped. Rendering the raw list (confirmed live with Claude's thinking)
+    would show a reasoning block's signature next to the answer.
     """
     if isinstance(content, str):
         return content
-    return "".join(
-        block.get("text", "") for block in content
-        if isinstance(block, dict) and block.get("type") == "text"
-    )
+    pieces = []
+    for block in content:
+        if isinstance(block, str):
+            pieces.append(block)
+        elif isinstance(block, dict) and block.get("type") in ("text", "output_text"):
+            pieces.append(block.get("text", ""))
+        # anything else (thinking, reasoning, tool use) is left out
+    return "".join(pieces)
 
 
-def build_agent(app_tools=None, checkpointer=None):
+def build_agent(app_tools=None, checkpointer=None, llm_config=None):
     """`app_tools` (from make_app_tools) replace the command-line team-ID
     squad tool -- the app passes them so chat works on the user's current
     squad and session.
@@ -219,13 +215,12 @@ def build_agent(app_tools=None, checkpointer=None):
     thread_config), each turn sees the conversation so far. Without one, as
     in the CLI and the evals, every invoke starts from nothing. The app
     passes a new InMemorySaver per Streamlit session -- never share one
-    between users."""
-    # An API key that isn't scoped to a single workspace needs this header on
-    # every request (confirmed live -- omitting it 400s), a key that *is*
-    # scoped doesn't need or accept it being wrong, so only send it when set.
-    workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
-    default_headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
-    llm = ChatAnthropic(model=MODEL, max_tokens=8000, default_headers=default_headers)
+    between users.
+
+    `llm_config` (llm.LLMConfig) picks the chat model; by default it comes
+    from the environment (LLM_PROVIDER etc., see llm.py). The agent doesn't
+    know or care which provider that is: same prompt, tools and graph."""
+    llm = build_chat_model(llm_config)
     tools = [get_gameweek_report] + list(app_tools or [get_team_squad_predictions])
     return create_react_agent(llm, tools, prompt=SYSTEM_PROMPT, checkpointer=checkpointer)
 
@@ -249,11 +244,11 @@ def _main():
     """
     import sys
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise SystemExit("ANTHROPIC_API_KEY not set -- see `ant auth login` or export it.")
-
     question = " ".join(sys.argv[1:]) or "Explain gameweek 3's results."
-    agent = build_agent()
+    try:
+        agent = build_agent()
+    except LLMConfigError as exc:
+        raise SystemExit(str(exc))
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
     print(extract_text(result["messages"][-1].content))
 

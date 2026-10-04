@@ -21,12 +21,67 @@ uv sync
 uv run streamlit run app.py
 ```
 
-The chat needs `ANTHROPIC_API_KEY` (and, only if your key isn't scoped to a
-single workspace, `ANTHROPIC_WORKSPACE_ID` -- an unscoped key is rejected
-without it). `agent.py` loads both via `python-dotenv` from a `.env` file in
-this directory or the `fpl-starts` root (first one that sets a variable
-wins); it never looks outside this repo. None of this is needed if the
-variables are already in your environment. `.env` files are gitignored.
+The chat needs an LLM provider's API key -- see **Choosing the model**
+below. `llm.py` loads the settings with `python-dotenv` from the `.env`
+file in the `fpl-starts` root when it's imported; variables already set in
+your environment win over the file, and nothing outside this repo is read.
+`.env` files are gitignored.
+
+### Choosing the model
+
+The agent doesn't know which provider it's talking to: `llm.py` builds the
+chat model from configuration, and that's the only place that knows about
+Anthropic or OpenAI. The prompt, tools, graph, memory, tracing and evals are
+the same for both.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `LLM_PROVIDER` | `anthropic` or `openai` | `anthropic` |
+| `ANTHROPIC_MODEL` | model when the provider is Anthropic | `claude-opus-5` |
+| `OPENAI_MODEL` | model when the provider is OpenAI | `gpt-6-sol` |
+| `LLM_MAX_TOKENS` | maximum output tokens per model call | `8000` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | the selected provider's key -- only that one is needed | -- |
+| `ANTHROPIC_WORKSPACE_ID` | Anthropic only: needed if the key isn't scoped to one workspace | -- |
+
+An unknown provider or a missing key for the selected provider stops the
+chat with a clear message (the rest of the page still works). There's no
+automatic fallback: if the configured provider is down, the chat fails
+rather than sending the question to another provider. The app logs the
+provider and model in use (`LLM provider: ..., model: ...`) whenever a
+session's agent is built, and every LangSmith trace carries them as
+`llm_provider` / `llm_model` metadata.
+
+**Switching production** (on shed): edit `~/repos/fpl-starts/.env`, then
+restart. For Anthropic:
+
+```dotenv
+LLM_PROVIDER=anthropic
+ANTHROPIC_MODEL=claude-opus-5
+ANTHROPIC_API_KEY=...
+```
+
+For OpenAI:
+
+```dotenv
+LLM_PROVIDER=openai
+OPENAI_MODEL=gpt-6-sol
+OPENAI_API_KEY=...
+```
+
+```bash
+sudo systemctl restart fpl-dashboard
+sudo systemctl status fpl-dashboard
+sudo journalctl -u fpl-dashboard -n 20 --no-pager   # after a first chat: "LLM provider: ..., model: ..."
+```
+
+Then ask one question in the app and check its LangSmith trace shows the
+expected `llm_provider` and `llm_model`. Before treating a new model as
+accepted, run the provider smoke test and the evals against it (see **Live
+evals**). No Python changes are needed.
+
+The same pattern would extend to embeddings if retrieval is ever added
+(`build_embedding_model(EmbeddingConfig)` beside `build_chat_model`); the
+agent doesn't use embeddings today, so there's no embedding layer.
 
 `data.py` resolves `models/`, `predictions/`, `data/`, `raw/` and
 `db/derived.db` from the repo root, whatever the working directory;
@@ -77,10 +132,11 @@ are shown as one.
 
 ## How the chat works
 
-The chat is a LangGraph ReAct agent (`create_react_agent`, `claude-opus-5`).
-Its graph is a loop: the **agent** node (Claude) either answers or asks for
-a tool; the **tools** node runs it and hands the result back; repeat until
-Claude answers. Claude never calculates a number itself -- every number in
+The chat is a LangGraph ReAct agent (`create_react_agent`, with the model
+from `llm.py` -- Claude by default). Its graph is a loop: the **agent** node
+(the model) either answers or asks for a tool; the **tools** node runs it
+and hands the result back; repeat until the model answers. The model never
+calculates a number itself -- every number in
 an answer comes from a tool, and every tool answer says when our FPL data
 is from.
 
@@ -91,7 +147,7 @@ sequenceDiagram
     actor M as Manager
     participant App as app.py
     participant G as LangGraph agent
-    participant C as Claude (agent node)
+    participant C as Model (agent node)
     participant T as tools node
     participant Tools as tools.py
     M->>App: "Who's at risk in my squad?"
@@ -147,7 +203,7 @@ kinds of state are kept apart:
 - **Business state** -- the squad, forecast, prices and news -- still comes
   from the fresh `tools.Context` snapshot built before every question, never
   from anything checkpointed. (An earlier tool *answer* in the conversation
-  can be older than the data, though; Claude calls the tool again when it
+  can be older than the data, though; the model calls the tool again when it
   needs current numbers.)
 
 The thread ID is an opaque UUID, made once per Streamlit session. **New
@@ -208,6 +264,8 @@ and `predictions/`, the app needs a writable disk.
 - **`agent.py`** -- the LangGraph agent and its system prompt; wraps the
   tools for the app. `uv run python agent.py "your question"` for a quick
   check outside Streamlit.
+- **`llm.py`** -- the chat model: provider and model from configuration
+  (`LLM_PROVIDER` etc.), the one place that knows about Anthropic and OpenAI.
 - **`data.py`** -- all data access: the forecast via `fpl_starts.pstart`,
   players, prices, news and the last completed gameweek from
   `db/derived.db`, scoring via `fpl_starts.scoring`, the refresh via
@@ -235,11 +293,15 @@ contract with a fake model.
 
 ### Live evals
 
-These call the Claude API (so they cost money and aren't part of pytest) on
-the synthetic data in `tests/fakes.py`; run them from this directory after
-sourcing `../.env`:
+These call the configured model's API (so they cost money and aren't part
+of pytest) on
+the synthetic data in `tests/fakes.py`; run them from this directory (the
+keys come from the repo-root `.env`, loaded by `llm.py`):
 
-- `uv run python -m evals.routing_eval` -- Claude's first decision only:
+- `uv run python -m evals.provider_smoke` -- can the model bind a tool,
+  return a structured tool call and continue from its result? The minimum
+  the agent needs; run it first when trying a new provider or model.
+- `uv run python -m evals.routing_eval` -- the model's first decision only:
   which tool, which arguments. Cheap; nothing is executed.
 - `uv run python -m evals.end_to_end_eval` -- one question through the whole
   agent and the real tools, scored on tool trajectory, numeric faithfulness
@@ -248,4 +310,9 @@ sourcing `../.env`:
   second turn needs the first ("him", "yes"), scored on conversation
   continuity and the same three checks.
 
-Each takes `--runs N`, since Claude's answers vary from run to run.
+Each takes `--runs N`, since the model's answers vary from run to run, and
+`--provider` / `--model` to evaluate a model other than the configured one
+(e.g. `--provider openai --model gpt-6-sol`).
+`uv run python -m evals.compare_models --model anthropic:claude-opus-5
+--model openai:gpt-6-sol --runs 5` runs all three for each model and prints
+a side-by-side table of pass rates, latency and reported token usage.

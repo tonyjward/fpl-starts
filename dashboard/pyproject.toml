@@ -12,6 +12,7 @@ dependencies = [
     "requests>=2.31",
     "python-dotenv>=1.0",
     "fpl-starts",
+    "langchain-openai>=1.6.7",
 ]
 
 [tool.uv.sources]

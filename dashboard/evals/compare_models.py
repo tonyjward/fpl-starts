@@ -10,12 +10,20 @@ Run from dashboard/ (this makes many API calls -- check --runs):
     uv run python -m evals.compare_models \\
         --model anthropic:claude-opus-5 --model openai:gpt-6-sol --runs 5
 
+Add `--out evals/results/<name>.json` to save every run (scores, tool
+calls, answers, latency, tokens) along with the golden cases, the date and
+the git commit -- notebooks/llm_model_benchmark.ipynb reads these files.
+
 Latency is wall-clock; tokens are the providers' own reported usage. No
 cost is estimated: prices aren't in the API responses, so a cost figure
 would be a guess.
 """
 
 import argparse
+import dataclasses
+import json
+import subprocess
+from datetime import datetime, timezone
 
 from evals import end_to_end_eval, multi_turn_eval, routing_eval
 from llm import load_llm_config
@@ -26,6 +34,46 @@ def _parse(spec):
     if not model:
         raise argparse.ArgumentTypeError("use provider:model, e.g. openai:gpt-6-sol")
     return load_llm_config(provider, model)
+
+
+def _json_default(value):
+    """Sets (a case's required tools), LLMConfig and a multi-turn case's
+    continuity check (saved by name), for json.dump."""
+    if callable(value):
+        return value.__name__
+    if isinstance(value, set):
+        return sorted(value)
+    if dataclasses.is_dataclass(value):
+        return dataclasses.asdict(value)
+    return str(value)
+
+
+def _git_commit():
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                              check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def save_results(path, models, runs, summaries):
+    """Everything needed to reproduce or re-analyse the comparison."""
+    payload = {
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "git_commit": _git_commit(),
+        "runs_per_case": runs,
+        "cases": {
+            "routing": routing_eval.CASES,
+            "e2e": end_to_end_eval.CASES,
+            "multi": multi_turn_eval.CASES,
+        },
+        "models": [],
+    }
+    for config, summary in zip(models, summaries):
+        payload["models"].append({"config": config, **summary})
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=1, default=_json_default, ensure_ascii=False)
+    print(f"Saved results to {path}")
 
 
 def _pct(value):
@@ -57,6 +105,7 @@ def main():
     parser.add_argument("--model", dest="models", type=_parse, action="append", required=True,
                         help="provider:model to evaluate; repeat for each model")
     parser.add_argument("--runs", type=int, default=2, help="runs per case for every eval (default 2)")
+    parser.add_argument("--out", help="save every run to this JSON file (see notebooks/llm_model_benchmark.ipynb)")
     args = parser.parse_args()
 
     summaries = []
@@ -94,6 +143,9 @@ def main():
         errors.append(summary["e2e"]["errors"] + summary["multi"]["errors"])
     if sum(errors):
         row("Errored runs (E2E + multi)", errors)
+
+    if args.out:
+        save_results(args.out, args.models, args.runs, summaries)
 
 
 if __name__ == "__main__":

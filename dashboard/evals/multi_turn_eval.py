@@ -231,7 +231,7 @@ def run_eval(llm_config, runs, verbose=False):
     common.print_performance(perf, unit="turn")
 
     return {"config": llm_config, "runs": total, "errors": errors,
-            **{key: count(key) / total for key in CHECKS}, **perf}
+            **{key: count(key) / total for key in CHECKS}, **perf, "details": results}
 
 
 def main():

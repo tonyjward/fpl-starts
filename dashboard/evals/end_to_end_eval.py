@@ -317,7 +317,7 @@ def run_eval(llm_config, runs, verbose=False):
 
     return {"config": llm_config, "runs": total, "errors": errors,
             "trajectory": count("trajectory") / total, "numbers": count("numbers") / total,
-            "scope": count("scope") / total, **perf}
+            "scope": count("scope") / total, **perf, "details": results}
 
 
 def main():

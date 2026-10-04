@@ -315,4 +315,7 @@ Each takes `--runs N`, since the model's answers vary from run to run, and
 (e.g. `--provider openai --model gpt-6-sol`).
 `uv run python -m evals.compare_models --model anthropic:claude-opus-5
 --model openai:gpt-6-sol --runs 5` runs all three for each model and prints
-a side-by-side table of pass rates, latency and reported token usage.
+a side-by-side table of pass rates, latency and reported token usage. Add
+`--out evals/results/<name>.json` to save every run;
+`notebooks/llm_model_benchmark.ipynb` turns a saved file into the case for
+promoting (or not) a model -- quality gates first, then cost and latency.

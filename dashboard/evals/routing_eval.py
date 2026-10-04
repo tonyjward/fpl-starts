@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent import (
     SYSTEM_PROMPT,
+    extract_text,
     get_gameweek_report,
     make_app_tools,
 )
@@ -148,7 +149,8 @@ def run_case(router, case):
             ]
         )
     input_tokens, output_tokens = common.usage([response])
-    performance = {"seconds": timer.seconds, "input_tokens": input_tokens, "output_tokens": output_tokens}
+    performance = {"seconds": timer.seconds, "input_tokens": input_tokens, "output_tokens": output_tokens,
+                   "text": extract_text(response.content)}  # what it said instead, when it called no tool
 
     calls = response.tool_calls
 
@@ -187,6 +189,16 @@ def run_eval(llm_config, runs):
 
         for run in range(1, runs + 1):
             tool_ok, args_ok, actual_tool, actual_args, calls, performance = run_case(router, case)
+            performance.update({
+                "case": number,
+                "question": case["question"],
+                "expected_tool": case["expected_tool"],
+                "actual_tool": actual_tool,
+                "actual_args": actual_args,
+                "tool_pass": tool_ok,
+                "args_pass": args_ok,
+                "tool_calls": len(calls),
+            })
             records.append(performance)
 
             tool_passes += int(tool_ok)
@@ -236,7 +248,7 @@ def run_eval(llm_config, runs):
     common.print_performance(perf, unit="call")
 
     return {"config": llm_config, "calls": total, "tool": tool_correct / total, "args": args_correct / total,
-            **perf}
+            **perf, "details": records}
 
 
 def main():

@@ -85,12 +85,28 @@ def _fmt(value):
     return "{0:g}".format(value)
 
 
+def _is_sum_or_difference(value, amounts):
+    """Whether `value` is the sum or difference of two of `amounts`, to the
+    nearest £0.1m (prices are in tenths)."""
+    for a in amounts:
+        for b in amounts:
+            if abs((a + b) - value) < 0.05 or abs((a - b) - value) < 0.05:
+                return True
+    return False
+
+
 def score_numbers(answer, question, observations):
-    """Every percentage and £ amount in `answer` must appear in the
-    evidence: the user's `question` plus every tool result
-    (`observations`, a list of strings). A percentage is also supported by
-    a decimal probability in a tool result that rounds to it (0.955 -> 96%),
-    since the squad report prints chances as decimals."""
+    """Every percentage and £ amount in `answer` must be backed by the
+    evidence: the user's `question` plus every tool result (`observations`,
+    a list of strings). The rule exists to catch invented numbers, so:
+
+    - a percentage must appear in the evidence, or be a decimal probability
+      from a tool that rounds to it (0.955 -> 96%), since the squad report
+      prints chances as decimals;
+    - a £ amount must appear in the evidence, or be the sum or difference of
+      two £ amounts that do ("leaves £4.2m spare" from a £12.6m budget and
+      an £8.4m player). Percentages get no such allowance: 97% - 40% is 57
+      percentage points, and "57% more likely" would be wrong."""
     evidence = "\n".join([question] + list(observations))
     stated_pct = percentages(evidence)
     decimal_pct = _decimal_percentages("\n".join(observations))
@@ -105,7 +121,9 @@ def score_numbers(answer, question, observations):
 
     unsupported_money = []
     for value in money(answer):
-        if not _near(value, stated_money, 1e-6):
+        stated = _near(value, stated_money, 1e-6)
+        arithmetic = _is_sum_or_difference(value, stated_money)
+        if not stated and not arithmetic:
             unsupported_money.append(_fmt(value))
 
     return {

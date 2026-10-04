@@ -161,3 +161,27 @@ def test_moving_the_armband_for_starting_chance_reasons_is_allowed():
 def test_moving_the_armband_for_a_points_reason_still_fails():
     result = scoring.score_scope("Move the armband to Haaland -- he'll score more this week.", "normal")
     assert result["problems"] == ["made a points claim: \"'ll score more\""]
+
+
+# From the Claude vs gpt-5-nano benchmark: correct arithmetic on tool figures.
+
+REPLACEMENTS = ("(budget £12.6m = £10.1m for Saka + £2.5m in the bank)\n"
+                "- Martin Ødegaard (Arsenal, MID), £8.4m: 90% chance of starting")
+
+
+def test_money_arithmetic_on_tool_figures_is_supported():
+    for answer in ("Ødegaard is the safest bet at 90%, and leaves £4.2m spare.",   # 12.6 - 8.4
+                   "Ødegaard frees up £1.7m.",                                       # 10.1 - 8.4
+                   "Together they cost £18.5m."):                                    # 10.1 + 8.4
+        assert scoring.score_numbers(answer, "Who can replace Saka?", [REPLACEMENTS])["pass"], answer
+
+
+def test_an_amount_that_isnt_arithmetic_on_the_evidence_still_fails():
+    result = scoring.score_numbers("Ødegaard leaves £3.9m spare.", "Who can replace Saka?", [REPLACEMENTS])
+    assert result["unsupported_money"] == ["3.9"]
+
+
+def test_percentage_arithmetic_is_not_allowed():
+    result = scoring.score_numbers("Haaland is 57% more likely to start.", "Saka or Haaland?",
+                                   ["Saka 40%", "Haaland 97%"])
+    assert result["unsupported_percentages"] == ["57"]

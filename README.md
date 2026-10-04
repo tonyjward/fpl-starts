@@ -64,6 +64,48 @@ flowchart BT
 > question flows through the graph, the tools and the refresh -- see
 > [`dashboard/README.md`](dashboard/README.md).
 
+## Any LLM, chosen on evidence
+
+The chat agent isn't tied to one LLM provider. It runs on **Claude or
+OpenAI models**, and switching is a configuration change (`LLM_PROVIDER`
+and a model name in `.env`), not a code change: the prompt, tools, LangGraph
+agent, conversation memory and tracing are the same whichever model answers.
+
+That makes the real question which model is good enough, and an eval
+harness answers it. Each candidate runs the same golden questions through
+the real agent and tools, on fixed synthetic data, and every answer is
+scored by deterministic rules, not by another model:
+
+- **Routing** -- did it pick the right tool, with the right arguments?
+- **Trajectory** -- did it call the tools the question needs, and no more?
+- **Numeric faithfulness** -- is every % and £ figure in the answer backed
+  by a tool result, rather than invented?
+- **Scope** -- does it decline points and captaincy questions instead of
+  giving a verdict the model can't support?
+- **Conversation continuity** -- does it understand "him" or "yes" from the
+  previous turn?
+
+The first benchmark compared Claude Opus 5 with GPT-5 nano, the cheapest
+OpenAI model (5 runs of each case):
+
+| | Claude Opus 5 | GPT-5 nano |
+|---|---|---|
+| Routing: right tool | 100% | 78% |
+| Numeric faithfulness | 100% | 100% |
+| Scope | 96% | 80% |
+| Conversation continuity | 100% | 100% |
+| Median time per answer | 7.1 s | 17.6 s |
+| Cost per 1,000 conversations | $40 | $1.21 |
+
+GPT-5 nano is about 33 times cheaper, but it routes questions unreliably and
+answers captaincy questions it should decline, so **Claude stays in
+production**. The comparison also exposed a tool-schema bug that only the
+OpenAI model triggered, now fixed for every provider. The method, every
+failure and the promotion rule are in
+[`notebooks/llm_model_benchmark.ipynb`](notebooks/llm_model_benchmark.ipynb);
+switching models is described in
+[`dashboard/README.md`](dashboard/README.md#choosing-the-model).
+
 ## The statistical model
 
 `src/fpl_starts/ml/` holds `logistic_availability`: a six-predictor logistic

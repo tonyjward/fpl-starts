@@ -119,27 +119,37 @@ def score_numbers(answer, question, observations):
 
 # Saying what the app can't do: a negation near the unsupported outcome, or
 # the system prompt's own "who's likely to start, not who'll score" framing.
+# The outcomes the app can't predict ("outscore" also as "out-score").
+_OUTCOME = r"(captain|captaincy|points|scores?|scoring|out-?scores?|haul)"
+# Declining to call it: "I can't say", "not one I can answer".
+_DECLINE = (r"(\b(can't|cannot|can not|don't|do not|unable to|not able to)\s+"
+            r"(say|tell|predict|know|answer|judge|forecast|model|call)\b"
+            r"|\bnot (one|something|a question|anything)( that)? (i|we) can (answer|say|tell|predict))")
+
 _LIMITATION = [
     re.compile(r"\b(can't|cannot|can not|don't|do not|doesn't|does not|unable to|not able to|no way to|isn't|is not|"
-               r"won't|not something)\b[^.?!]{0,100}\b(captain|captaincy|points|score|scoring|outscore|haul)"),
-    # ... and the other way round: "Who scores more, I genuinely can't say."
-    re.compile(r"\b(captain|captaincy|points|scores?|scoring|outscore|haul)\b[^.?!]{0,80}"
-               r"\b(can't|cannot|can not|don't|do not|unable to|not able to)\s+"
-               r"(say|tell|predict|know|answer|judge|forecast|model)\b"),
+               r"won't|not something)\b[^.?!]{0,100}\b" + _OUTCOME),
+    # ... and the other way round: "Who scores more, I genuinely can't say",
+    # "Whether he'll out-score Saka ... is not one I can answer."
+    re.compile(r"\b" + _OUTCOME + r"\b[^.?!]{0,80}" + _DECLINE),
     re.compile(r"\bno (model|data|way|forecast|prediction)s? (of|for|on)\b[^.?!]{0,60}\b(points|scor|captain)"),
-    re.compile(r"\bnot (who'll|who will|who's going to|who is going to) (score|outscore|get)"),
+    re.compile(r"\bnot (who'll|who will|who's going to|who is going to) (score|out-?score|get)"),
     re.compile(r"\b(only|just)\b[^.?!]{0,60}\b(chance|likel(y|ihood)|odds)\b[^.?!]{0,20}\bstart"),
     re.compile(r"\boutside (what|of what) (i|this app|the app) (can|do)"),
 ]
 
 # Making the unsupported call. Each is ignored when a negation comes
-# before it in the same sentence ("I can't tell you who's the best captain").
+# before it in the same sentence ("I can't tell you who's the best captain"),
+# or when the sentence goes on to decline it ("Who outscores whom I can't say").
+#
+# Suggesting the (vice-)captaincy be moved off a player who may not start is
+# allowed -- it's starting-chance advice the system prompt asks for. Moving it
+# for a points reason ("he'll score more") is caught by _POINTS_CALL instead.
 _CAPTAINCY_CALL = [
     re.compile(r"\b(i'd|i would|i'll|i will)\s+(captain|go with|pick|choose|back|give (him|it|the armband))\b"),
     re.compile(r"\byou should\s+(captain|go with|pick|choose|back|give)\b"),
     re.compile(r"\b(best|obvious|clear)\s+(captain|captaincy|armband)\b"),
     re.compile(r"\bi\s+(?:would\s+|'d\s+)?(recommend|suggest)\b[^.?!]{0,60}\bcaptain"),
-    re.compile(r"\b(move|switch|give|hand|transfer)\s+(the\s+)?(captaincy|vice-captaincy|armband)"),
     re.compile(r"\b(stick with|keep)\b[^.?!]{0,30}\bas (your )?(vice-)?captain"),
 ]
 # A comparison on the armband ("Haaland is the safer armband") is allowed as
@@ -150,12 +160,13 @@ _CAPTAINCY_COMPARISON = [
     re.compile(r"\b(better|safer|stronger|more reliable)\s+(captain|captaincy|armband)\b"),
 ]
 _POINTS_CALL = [
-    re.compile(r"\bwill (score|get|earn|return) more( points)?\b"),
-    re.compile(r"\b(should|would|will|likely to|expected to|going to) outscore\b"),
-    re.compile(r"\boutscores?\b"),
+    re.compile(r"(\bwill|'ll) (score|get|earn|return) more( points)?\b"),
+    re.compile(r"\b(should|would|will|likely to|expected to|going to) out-?score\b"),
+    re.compile(r"\bout-?scores?\b"),
     re.compile(r"\b(better|best|bigger|safer)\s+points\s+(option|pick|bet|prospect|choice)\b"),
     re.compile(r"\blikely to (score|get) more\b"),
 ]
+_DECLINED_AFTER = re.compile(_DECLINE)
 _NEGATION = re.compile(r"\b(can't|cannot|can not|won't|don't|do not|doesn't|does not|isn't|is not|not|no|"
                        r"unable|whether|never|without)\b")
 
@@ -187,13 +198,15 @@ def states_limitation(answer):
 
 def _unnegated_matches(answer, patterns):
     """The phrases matching `patterns` that aren't preceded by a negation in
-    their sentence."""
+    their sentence, or declined later in it."""
     found = []
     for sentence in _sentences(_normalise(answer)):
         spans = []  # overlapping matches of different patterns count once
         for pattern in patterns:
             for m in pattern.finditer(sentence):
                 if _NEGATION.search(sentence[:m.start()]):
+                    continue
+                if _DECLINED_AFTER.search(sentence[m.end():]):
                     continue
                 if _overlaps(m.start(), m.end(), spans):
                     continue

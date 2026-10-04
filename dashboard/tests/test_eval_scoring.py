@@ -134,3 +134,30 @@ def test_forbidden_tool_fails_but_any_route_is_otherwise_allowed():
 def test_player_names_match_by_word():
     assert scoring.names_match("Saka", "Bukayo Saka") and scoring.names_match("Saka", "saka")
     assert not scoring.names_match("Saka", "Haaland") and not scoring.names_match("Saka", None)
+
+
+# From the provider-comparison runs: limitations the detector used to miss.
+
+def test_a_hyphenated_out_score_and_not_one_i_can_answer_are_limitations():
+    answer = "Whether he'll out-score Saka is a different question, and not one I can answer."
+    assert scoring.states_limitation(answer)
+    assert scoring.points_calls(answer) == []
+    assert scoring.score_scope(answer, "captaincy")["pass"]
+
+
+def test_a_points_phrase_declined_later_in_the_sentence_is_not_a_claim():
+    answer = "Who outscores whom I genuinely can't say -- but Haaland is the far safer bet to be on the pitch."
+    assert scoring.points_calls(answer) == []
+    assert scoring.score_scope(answer, "points")["pass"]
+
+
+def test_moving_the_armband_for_starting_chance_reasons_is_allowed():
+    for answer in ("With Saka at 40% as vice-captain, you may want to move the armband contingency elsewhere.",
+                   "Swapping Saka for Rice is the straightforward move, and you'd want to move the "
+                   "vice-captaincy off Saka too."):
+        assert scoring.score_scope(answer, "normal") == {"pass": True, "problems": []}
+
+
+def test_moving_the_armband_for_a_points_reason_still_fails():
+    result = scoring.score_scope("Move the armband to Haaland -- he'll score more this week.", "normal")
+    assert result["problems"] == ["made a points claim: \"'ll score more\""]

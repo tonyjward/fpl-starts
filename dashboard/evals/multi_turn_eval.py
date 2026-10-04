@@ -16,6 +16,7 @@ Run from dashboard/ (each case makes several API calls):
 
     uv run python -m evals.multi_turn_eval            # 2 runs per case
     uv run python -m evals.multi_turn_eval --runs 5 --verbose
+    uv run python -m evals.multi_turn_eval --provider openai --model gpt-6-sol
 """
 
 import argparse
@@ -26,7 +27,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
 from agent import extract_text, thread_config
-from evals import scoring
+from evals import common, scoring
 from evals.end_to_end_eval import build_context, build_eval_agent, extract_trajectory
 
 
@@ -76,10 +77,10 @@ CASES = [
 _LOST_THREAD = ("anything pending", "what you'd like me to", "what would you like me to", "not sure what you")
 
 
-def run_case(case):
+def run_case(case, llm_config=None):
     """One fresh context, agent, saver and thread per run."""
     ctx = build_context()
-    graph = build_eval_agent(ctx, checkpointer=InMemorySaver())
+    graph = build_eval_agent(ctx, checkpointer=InMemorySaver(), llm_config=llm_config)
     config = thread_config(str(uuid.uuid4()), app="fpl-starts-eval")
 
     seeded_texts = []
@@ -93,11 +94,14 @@ def run_case(case):
     try:
         for question in case["turns"]:
             before = len(graph.get_state(config).values.get("messages", []))
-            result = graph.invoke({"messages": [{"role": "user", "content": question}]}, config=config)
+            with common.Timer() as timer:
+                result = graph.invoke({"messages": [{"role": "user", "content": question}]}, config=config)
             new = result["messages"][before:]  # this turn only: the thread holds the rest
             calls, observations, _ = extract_trajectory(new)
             answer = extract_text(new[-1].content) if new[-1].type == "ai" else ""
-            turns.append({"question": question, "calls": calls, "observations": observations, "answer": answer})
+            input_tokens, output_tokens = common.usage(new)
+            turns.append({"question": question, "calls": calls, "observations": observations, "answer": answer,
+                          "seconds": timer.seconds, "input_tokens": input_tokens, "output_tokens": output_tokens})
     except Exception as exc:  # noqa: BLE001 -- an API/graph error fails the run, not the whole eval
         return {"error": "{0}: {1}".format(type(exc).__name__, exc), "turns": turns}
 
@@ -180,21 +184,18 @@ def print_run(case, run_number, runs, run):
         print(f"Scope problem: {problem}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--runs", type=int, default=2,
-                        help="times to run each conversation (default 2) -- each makes several API calls")
-    parser.add_argument("--verbose", action="store_true", help="print every run, not only the failed ones")
-    args = parser.parse_args()
-    runs = args.runs
-
+def run_eval(llm_config, runs, verbose=False):
+    """Run every conversation `runs` times against `llm_config`'s model,
+    printing failed (or, with `verbose`, all) runs and a report; returns the
+    summary (see compare_models.py)."""
+    common.print_header("MULTI-TURN EVAL", llm_config, runs)
     results = {}
     for case in CASES:
         results[case["id"]] = []
         for run_number in range(1, runs + 1):
-            run = run_case(case)
+            run = run_case(case, llm_config)
             results[case["id"]].append(run)
-            if args.verbose or not all(passed(run, key) for key in CHECKS):
+            if verbose or not all(passed(run, key) for key in CHECKS):
                 print_run(case, run_number, runs, run)
 
     all_runs = [run for case_runs in results.values() for run in case_runs]
@@ -225,6 +226,22 @@ def main():
                        ("Turn-2 faithfulness:", "numbers"), ("Turn-2 scope:", "scope")):
         n = count(key)
         print(f"{label:<26}{n:>3}/{total:<3} {n / total:>5.0%}")
+    print()
+    perf = common.performance([turn for run in all_runs for turn in run["turns"]])
+    common.print_performance(perf, unit="turn")
+
+    return {"config": llm_config, "runs": total, "errors": errors,
+            **{key: count(key) / total for key in CHECKS}, **perf, "details": results}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--runs", type=int, default=2,
+                        help="times to run each conversation (default 2) -- each makes several API calls")
+    parser.add_argument("--verbose", action="store_true", help="print every run, not only the failed ones")
+    common.add_llm_arguments(parser)
+    args = parser.parse_args()
+    run_eval(common.llm_config_from_args(args), args.runs, args.verbose)
 
 
 if __name__ == "__main__":

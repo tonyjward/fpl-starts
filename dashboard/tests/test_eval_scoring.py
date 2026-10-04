@@ -134,3 +134,54 @@ def test_forbidden_tool_fails_but_any_route_is_otherwise_allowed():
 def test_player_names_match_by_word():
     assert scoring.names_match("Saka", "Bukayo Saka") and scoring.names_match("Saka", "saka")
     assert not scoring.names_match("Saka", "Haaland") and not scoring.names_match("Saka", None)
+
+
+# From the provider-comparison runs: limitations the detector used to miss.
+
+def test_a_hyphenated_out_score_and_not_one_i_can_answer_are_limitations():
+    answer = "Whether he'll out-score Saka is a different question, and not one I can answer."
+    assert scoring.states_limitation(answer)
+    assert scoring.points_calls(answer) == []
+    assert scoring.score_scope(answer, "captaincy")["pass"]
+
+
+def test_a_points_phrase_declined_later_in_the_sentence_is_not_a_claim():
+    answer = "Who outscores whom I genuinely can't say -- but Haaland is the far safer bet to be on the pitch."
+    assert scoring.points_calls(answer) == []
+    assert scoring.score_scope(answer, "points")["pass"]
+
+
+def test_moving_the_armband_for_starting_chance_reasons_is_allowed():
+    for answer in ("With Saka at 40% as vice-captain, you may want to move the armband contingency elsewhere.",
+                   "Swapping Saka for Rice is the straightforward move, and you'd want to move the "
+                   "vice-captaincy off Saka too."):
+        assert scoring.score_scope(answer, "normal") == {"pass": True, "problems": []}
+
+
+def test_moving_the_armband_for_a_points_reason_still_fails():
+    result = scoring.score_scope("Move the armband to Haaland -- he'll score more this week.", "normal")
+    assert result["problems"] == ["made a points claim: \"'ll score more\""]
+
+
+# From the Claude vs gpt-5-nano benchmark: correct arithmetic on tool figures.
+
+REPLACEMENTS = ("(budget £12.6m = £10.1m for Saka + £2.5m in the bank)\n"
+                "- Martin Ødegaard (Arsenal, MID), £8.4m: 90% chance of starting")
+
+
+def test_money_arithmetic_on_tool_figures_is_supported():
+    for answer in ("Ødegaard is the safest bet at 90%, and leaves £4.2m spare.",   # 12.6 - 8.4
+                   "Ødegaard frees up £1.7m.",                                       # 10.1 - 8.4
+                   "Together they cost £18.5m."):                                    # 10.1 + 8.4
+        assert scoring.score_numbers(answer, "Who can replace Saka?", [REPLACEMENTS])["pass"], answer
+
+
+def test_an_amount_that_isnt_arithmetic_on_the_evidence_still_fails():
+    result = scoring.score_numbers("Ødegaard leaves £3.9m spare.", "Who can replace Saka?", [REPLACEMENTS])
+    assert result["unsupported_money"] == ["3.9"]
+
+
+def test_percentage_arithmetic_is_not_allowed():
+    result = scoring.score_numbers("Haaland is 57% more likely to start.", "Saka or Haaland?",
+                                   ["Saka 40%", "Haaland 97%"])
+    assert result["unsupported_percentages"] == ["57"]

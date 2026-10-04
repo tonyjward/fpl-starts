@@ -23,6 +23,9 @@ def fake_fpl(monkeypatch):
 
     st.cache_data.clear()
     st.cache_resource.clear()
+    # The app reads the LLM settings; pin them so a real .env can't change
+    # what these tests see (the model itself is faked -- see scripted_llm).
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
     monkeypatch.setattr(data, "load_player_universe", fakes.universe)
     monkeypatch.setattr(data, "last_completed_gameweek", lambda season=None: fakes.LAST_COMPLETED_GW)
@@ -81,6 +84,6 @@ def scripted_llm(monkeypatch):
 
     def configure(tool_name, tool_args=None):
         holder["llm"] = scripted_chat_model(tool_name, tool_args or {})
-        monkeypatch.setattr(agent, "ChatAnthropic", lambda **kwargs: holder["llm"])
+        monkeypatch.setattr(agent, "build_chat_model", lambda config=None: holder["llm"])
         return holder["llm"]
     return configure

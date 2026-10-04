@@ -11,11 +11,11 @@ explanations on the left, and a LangGraph agent chat beside them on the
 right.
 
 Read-only against derived.db, predictions/ and the public FPL API -- see
-data.py's module docstring. Requires ANTHROPIC_API_KEY (or an `ant auth
-login` profile) for the chat only.
+data.py's module docstring. The chat needs the configured LLM provider's
+API key (LLM_PROVIDER and friends -- see llm.py); the rest of the page
+doesn't.
 """
 
-import os
 import uuid
 
 import pandas as pd
@@ -28,6 +28,7 @@ import data
 import squad
 import tools
 from agent import SEASON, build_agent, extract_text, make_app_tools, thread_config
+from llm import LLMConfigError, load_llm_config
 
 st.set_page_config(page_title="Who's likely to start?", layout="wide")
 st.title("Who's likely to start?")
@@ -288,20 +289,27 @@ with chat_area:
     st.subheader("Ask about your squad")
     st.caption("For example: who's at risk in my team? Is Palmer fit? Who could replace Greaves for £5m? "
                "Is our data up to date?")
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        st.warning("ANTHROPIC_API_KEY isn't set in this environment -- the chat agent "
-                   "needs it (or an `ant auth login` profile) to run.")
-
     if "agent" not in state:
         # The tools read `chat["ctx"]`, a fresh snapshot set before every
         # question (see tools_context), so they always see the current squad,
         # transfers and data without the agent being rebuilt. The checkpointer
         # holds only this session's conversation (one per session agent, never
         # shared between users) -- the squad and data never come from it.
-        chat = state.chat = {}
-        state.agent = build_agent(app_tools=make_app_tools(
-            lambda: squad.current_squad_report(chat["ctx"].state), lambda: chat["ctx"],
-            lambda: refresh_and_report(chat["ctx"])), checkpointer=InMemorySaver())
+        # The model is whatever llm.py's configuration selects; a provider
+        # that can't be used stops the chat here, never silently switches.
+        chat = {}
+        try:
+            chat["llm_config"] = load_llm_config()
+            agent = build_agent(app_tools=make_app_tools(
+                lambda: squad.current_squad_report(chat["ctx"].state), lambda: chat["ctx"],
+                lambda: refresh_and_report(chat["ctx"])), checkpointer=InMemorySaver(),
+                llm_config=chat["llm_config"])
+        except LLMConfigError as exc:
+            st.error("The chat isn't available: {0}".format(exc))
+            st.stop()
+        print("LLM provider: {0}, model: {1}".format(chat["llm_config"].provider, chat["llm_config"].model),
+              flush=True)
+        state.chat, state.agent = chat, agent
     if "agent_thread_id" not in state:
         new_agent_thread(state)
     if "chat_history" not in state:
@@ -334,7 +342,9 @@ if question:
                 result = state.agent.invoke(
                     {"messages": [{"role": "user", "content": question}]},
                     config=thread_config(state.agent_thread_id, app="fpl-starts", season=SEASON,
-                                         gameweek=state["last_completed_gameweek"] + 1))
+                                         gameweek=state["last_completed_gameweek"] + 1,
+                                         llm_provider=state.chat["llm_config"].provider,
+                                         llm_model=state.chat["llm_config"].model))
                 keep_tool_writes(state.chat["ctx"])
                 answer = extract_text(result["messages"][-1].content)
             st.markdown(answer)

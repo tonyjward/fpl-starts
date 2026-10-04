@@ -37,3 +37,21 @@ def test_tool_descriptions_tell_the_model_when_to_use_them():
     assert "3-per-club" in app_tools["find_replacements"].description
     assert "deadline" in app_tools["refresh_fpl_data"].description
     assert "who'll score" in agent.SYSTEM_PROMPT  # it declines points/captaincy questions
+
+
+def test_optional_arguments_accept_explicit_nulls():
+    """Some models (OpenAI's) send unused optional arguments as null rather
+    than leaving them out; that must mean the same as leaving them out."""
+    ctx = _context()
+    app_tools = {t.name: t for t in agent.make_app_tools(lambda: "", lambda: ctx, lambda: "")}
+    with_nulls = app_tools["find_replacements"].invoke(
+        {"replacing": "Saka", "position": None, "max_price": None, "bank": 2.5, "min_chance": 0.75})
+    assert with_nulls == tools.find_replacements(_context(), replacing="Saka", bank=2.5)
+
+
+def test_every_argument_defaulting_to_none_is_nullable_in_the_schema():
+    app_tools = agent.make_app_tools(lambda: "", lambda: None, lambda: "")
+    for t in app_tools + [agent.get_gameweek_report, agent.get_team_squad_predictions]:
+        for name, field in t.tool_call_schema.model_json_schema().get("properties", {}).items():
+            if "default" in field and field["default"] is None:
+                assert {"type": "null"} in field.get("anyOf", []), "{0}.{1} rejects null".format(t.name, name)

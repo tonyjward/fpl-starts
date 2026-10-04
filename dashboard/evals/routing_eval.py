@@ -1,7 +1,8 @@
 """Live evaluation of the agent's first routing decision.
 
-Uses the real production system prompt, model and tool schemas, but does
-NOT execute any tools. This evaluates:
+Uses the real production system prompt, tool schemas and chat model (the
+same llm.build_chat_model as the app, so any configured provider), but
+does NOT execute any tools. This evaluates:
 
 - tool selection
 - argument extraction
@@ -10,21 +11,22 @@ Run from dashboard/:
 
     uv run python -m evals.routing_eval            # 5 runs per case
     uv run python -m evals.routing_eval --runs 10
+    uv run python -m evals.routing_eval --provider openai --model gpt-6-sol
 """
 
 import argparse
-import os
 from math import isclose
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent import (
-    MODEL,
     SYSTEM_PROMPT,
+    extract_text,
     get_gameweek_report,
     make_app_tools,
 )
+from evals import common
+from llm import build_chat_model
 
 
 CASES = [
@@ -83,25 +85,14 @@ CASES = [
 ]
 
 
-def build_router():
-    """Build the same Claude + tool interface used by the real app.
+def build_router(llm_config):
+    """Build the same model + tool interface used by the real app.
 
     The callback bodies are deliberately harmless: this script never
-    executes the tools. We only ask Claude which tool it would call.
+    executes the tools. We only ask the model which tool it would call.
     """
 
-    workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
-    default_headers = (
-        {"anthropic-workspace-id": workspace_id}
-        if workspace_id
-        else None
-    )
-
-    llm = ChatAnthropic(
-        model=MODEL,
-        max_tokens=1000,
-        default_headers=default_headers,
-    )
+    llm = build_chat_model(llm_config)
 
     app_tools = make_app_tools(
         get_report=lambda: "stub",
@@ -114,7 +105,7 @@ def build_router():
     return llm.bind_tools(tools)
 
 
-# Player-name arguments: Claude may expand "Palmer" to "Cole Palmer",
+# Player-name arguments: the model may expand "Palmer" to "Cole Palmer",
 # which the tools resolve just the same.
 NAME_ARGS = {"name", "replacing"}
 
@@ -136,7 +127,7 @@ def value_matches(key, actual, expected):
 def expected_args_match(actual, expected):
     """Expected args are a subset.
 
-    Claude is allowed to explicitly send optional defaults that we did
+    The model is allowed to explicitly send optional defaults that we did
     not specify in the golden case.
     """
 
@@ -147,14 +138,19 @@ def expected_args_match(actual, expected):
 
 
 def run_case(router, case):
-    """(tool_ok, args_ok, actual_tool, actual_args, calls) for one call."""
+    """(tool_ok, args_ok, actual_tool, actual_args, calls, performance) for
+    one call; performance is {seconds, input_tokens, output_tokens}."""
 
-    response = router.invoke(
-        [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=case["question"]),
-        ]
-    )
+    with common.Timer() as timer:
+        response = router.invoke(
+            [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=case["question"]),
+            ]
+        )
+    input_tokens, output_tokens = common.usage([response])
+    performance = {"seconds": timer.seconds, "input_tokens": input_tokens, "output_tokens": output_tokens,
+                   "text": extract_text(response.content)}  # what it said instead, when it called no tool
 
     calls = response.tool_calls
 
@@ -175,29 +171,35 @@ def run_case(router, case):
         )
     )
 
-    return tool_ok, args_ok, actual_tool, actual_args, calls
+    return tool_ok, args_ok, actual_tool, actual_args, calls, performance
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--runs",
-        type=int,
-        default=5,
-        help="times to ask each question (default 5) -- Claude's answers vary",
-    )
-    runs = parser.parse_args().runs
-
-    router = build_router()
+def run_eval(llm_config, runs):
+    """Run every case `runs` times against `llm_config`'s model, printing
+    failures and a report; returns the summary (see compare_models.py)."""
+    common.print_header("ROUTING EVAL", llm_config, runs)
+    router = build_router(llm_config)
 
     results = []  # per case: (tool passes, args passes)
+    records = []  # per call: latency and usage
 
     for number, case in enumerate(CASES, start=1):
         tool_passes = 0
         args_passes = 0
 
         for run in range(1, runs + 1):
-            tool_ok, args_ok, actual_tool, actual_args, calls = run_case(router, case)
+            tool_ok, args_ok, actual_tool, actual_args, calls, performance = run_case(router, case)
+            performance.update({
+                "case": number,
+                "question": case["question"],
+                "expected_tool": case["expected_tool"],
+                "actual_tool": actual_tool,
+                "actual_args": actual_args,
+                "tool_pass": tool_ok,
+                "args_pass": args_ok,
+                "tool_calls": len(calls),
+            })
+            records.append(performance)
 
             tool_passes += int(tool_ok)
             args_passes += int(args_ok)
@@ -242,6 +244,24 @@ def main():
     print("SUMMARY")
     print(f"Tool routing:     {tool_correct}/{total} ({tool_correct / total:.1%})")
     print(f"Argument routing: {args_correct}/{total} ({args_correct / total:.1%})")
+    perf = common.performance(records)
+    common.print_performance(perf, unit="call")
+
+    return {"config": llm_config, "calls": total, "tool": tool_correct / total, "args": args_correct / total,
+            **perf, "details": records}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=5,
+        help="times to ask each question (default 5) -- the model's answers vary",
+    )
+    common.add_llm_arguments(parser)
+    args = parser.parse_args()
+    run_eval(common.llm_config_from_args(args), args.runs)
 
 
 if __name__ == "__main__":

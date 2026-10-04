@@ -280,3 +280,31 @@ def test_each_session_gets_its_own_opaque_thread_id(fake_fpl, scripted_llm):
     ids = [first.session_state["agent_thread_id"], second.session_state["agent_thread_id"]]
     assert ids[0] != ids[1]
     assert all(str(fakes.VALID_TEAM_ID) not in i and len(i) == 36 for i in ids)  # a UUID, not the team ID
+
+
+def test_each_question_is_traced_with_the_thread_and_the_configured_model(fake_fpl, scripted_llm, monkeypatch):
+    """The invoke config carries the thread ID and the provider/model from
+    the LLM settings -- what LangSmith groups and filters traces by."""
+    import agent
+
+    seen = []
+    real = agent.thread_config
+    monkeypatch.setattr(agent, "thread_config", lambda thread_id, **meta: seen.append(meta) or real(thread_id, **meta))
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
+    scripted_llm("squad_risks")
+    at = _ready_for_chat()
+    at.chat_input[0].set_value("Who's at risk?").run()
+    assert not at.exception
+    assert seen == [{"app": "fpl-starts", "season": "2026-27", "gameweek": 6,
+                     "llm_provider": "openai", "llm_model": "gpt-test"}]
+
+
+def test_a_missing_provider_key_stops_only_the_chat(fake_fpl, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    at = _ready_for_chat()
+    assert not at.exception
+    assert "OPENAI_API_KEY is not configured" in at.error[0].value
+    assert _predictions_table(at) is not None  # the rest of the page still works

@@ -148,8 +148,9 @@ def make_app_tools(get_report, get_context, refresh_and_report):
         return session_tools.squad_risks(get_context(), threshold)
 
     @tool
-    def find_replacements(replacing: str = None, position: str = None, max_price: float = None,
-                          bank: float = None, min_chance: float = 0.75) -> str:
+    def find_replacements(replacing: str | None = None, position: str | None = None,
+                          max_price: float | None = None, bank: float | None = None,
+                          min_chance: float = 0.75) -> str:
         """Players likely to start (chance >= `min_chance`, 0-1) who aren't
         in the user's squad. Give `replacing` (a squad player's name) to use
         his position and budget (his price + the bank); or `position`
